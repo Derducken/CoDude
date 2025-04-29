@@ -62,3 +62,13 @@ You'll have to keep CoDude running if you want its hotkey to work.
 Pressing the hotkey again when its interface is visible will hide it again (I personally find it useful having it always available as a toggle).
 
 And now, enjoy your seamless interractions with your LLMs with a single keypress!
+
+## Installation & Use
+1. Install [LM Studio](https://lmstudio.ai/) (or any other solution that exposes an LLM through a single OpenAI-compatible URL).
+2. Run LM Studio, visit its **Developer** page (green terminal icon) and **Select a model to load**. If you haven't downloaded any models, first pay a visit to the **Discover** page. Models that work nicely for text manipulation are... Well, anything over 3B like Mistral, Llama, Gemma, DeepSeek R1, and Qwen have worked for me.
+3. Copy the URL from "**Reachable at**" you'll see at the top right of LM Studio's developer page.
+4. Run CoDude, and press its default hotkey (**CTRL** + **Alt** + **C**) to see its window.
+5. Click on the **CoDude** menu, and paste the URL you copied in the **LLM URL** field.
+6. **Save** the changes and minimize CoDude. Done!
+7. Select a string of text in **any** app. Copy it to the clipboard and hit CoDude's shortcut (by default **CTRL** + **Alt** + **C**).
+8. Enjoy!
