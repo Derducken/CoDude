@@ -18,7 +18,9 @@ The app comes with some sample recipes that you'll see as buttons on its left si
 
 You can edit all recipes, or replace them with your own, by editing the Recipes.md file with a text editor. You can quickly access this file from the app's CoDude menu. The command structure relies on markdown, and is:
 
+```Markdown
 **Command Name**: Instructions to the LLM about what you want to do with the text you selected:
+```
 
 Notice that the "Command Name" is in bold (two asterisks before and after it in Markdown syntax), and followed by ":" and a space. The instructions are normal text, and should all be structured as a single line of text - no breaks, no pressing Enter and adding lists. They should also end with ":". The text you selected and copied to the clipboard is appended automatically after the command.
 
