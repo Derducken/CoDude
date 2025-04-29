@@ -44,7 +44,7 @@ You'll find the app's configuration "hidden" in CoDude's main menu (named "CoDud
 From there, you can...
 
 - Define the LLM's URL (OpenAI-friendly, like the "http://127.0.0.1:7777" I'm using in LM Studio, or "something like that").
-- Choose the hotkey you want to use to "call" the app.
+- Choose the hotkey you want to use to "call" the app. By default, it's **CTRL** + **Alt** + **C**.
 - Switch between normal and dark themes.
 - Select if you want the LLM's responses to show up in separate windows or integrated in the app's main window.
 - Change the app's font size (affects every app element).
