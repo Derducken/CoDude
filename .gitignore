@@ -1,0 +1,11 @@
+backups
+build
+dist
+memory
+.clinerules
+codude.log
+compile-to-exe.bat
+config.json
+problems-and-solutions.md
+project.md
+text-analytics.png
