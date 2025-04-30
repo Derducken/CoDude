@@ -162,7 +162,19 @@ class ResultWindow(QMainWindow):
 
     def closeEvent(self, event):
         self.on_text_changed()
+        if self.parent and hasattr(self.parent, 'result_windows'):
+            try:
+                self.parent.result_windows.remove(self)
+            except ValueError:
+                pass
         super().closeEvent(event)
+
+    def changeEvent(self, event):
+        if event.type() == QEvent.Type.WindowStateChange:
+            if self.isMinimized():
+                self.hide()
+                event.ignore()
+        super().changeEvent(event)
 
     def export_to_markdown(self):
         options = QFileDialog.Options()
@@ -468,6 +480,7 @@ class ConfigWindow(QDialog):
 class CoDudeApp(QMainWindow):
     def __init__(self):
         super().__init__()
+        self._minimized_by_shortcut = False
         logging.info("Starting CoDudeApp initialization")
         self.setWindowTitle("CoDude")
         self.setGeometry(100, 100, 800, 800)
@@ -1322,8 +1335,10 @@ class CoDudeApp(QMainWindow):
                         self.save_textarea_changes(self.active_memory_index, self.results_textedit.toPlainText())
                     event.ignore()
                     self.hide()
-                    for window in self.result_windows:
-                        window.hide()
+                    # Don't hide result windows when minimizing via window button
+                    if self._minimized_by_shortcut:
+                        for window in self.result_windows:
+                            window.hide()
                     self.tray_icon.showMessage(
                         "CoDude",
                         "CoDude is running in the background.",
@@ -1345,16 +1360,22 @@ class CoDudeApp(QMainWindow):
     def show_window(self):
         try:
             if self.isHidden():
+                self._minimized_by_shortcut = False
                 self.showNormal()
                 self.activateWindow()
-                for window in self.result_windows:
-                    window.showNormal()
+                # Show all result windows that weren't manually closed
+                for window in self.result_windows[:]:
+                    if window:
+                        window.showNormal()
             else:
                 if self.active_memory_index is not None:
                     self.save_textarea_changes(self.active_memory_index, self.results_textedit.toPlainText())
+                self._minimized_by_shortcut = True
                 self.hide()
-                for window in self.result_windows:
-                    window.hide()
+                # Hide all result windows when minimized by shortcut
+                for window in self.result_windows[:]:
+                    if window:
+                        window.hide()
             logging.debug("Window visibility toggled")
         except Exception as e:
             logging.error("Error in show_window: %s", e)
