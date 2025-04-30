@@ -376,7 +376,19 @@ class ConfigWindow(QDialog):
         self.standardize_layout(logging_layout)
         self.layout.addLayout(logging_layout)
 
-        # 14. Thematic Spacer (10px before Buttons)
+        # 14. Close Behavior
+        close_behavior_layout = QHBoxLayout()
+        close_behavior_label = QLabel("Close Behavior:", self)
+        close_behavior_label.setFixedHeight(20)
+        close_behavior_layout.addWidget(close_behavior_label)
+        self.close_behavior_combo = QComboBox(self)
+        self.close_behavior_combo.setFixedHeight(20)
+        self.close_behavior_combo.addItems(['Exit', 'Minimize to Tray'])
+        close_behavior_layout.addWidget(self.close_behavior_combo)
+        self.standardize_layout(close_behavior_layout)
+        self.layout.addLayout(close_behavior_layout)
+
+        # 15. Thematic Spacer (10px before Buttons)
         self.layout.addSpacerItem(QSpacerItem(20, 10, QSizePolicy.Minimum, QSizePolicy.Fixed))
 
         # 15. Buttons
@@ -443,6 +455,7 @@ class ConfigWindow(QDialog):
                     self.font_size_slider.setValue(config.get("font_size", 10))
                     self.permanent_memory_checkbox.setChecked(config.get("permanent_memory", False))
                     self.memory_dir_input.setText(config.get("memory_dir", ""))
+                    self.close_behavior_combo.setCurrentText(config.get("close_behavior", "Exit"))
             logging.debug("Config loaded successfully in ConfigWindow")
         except Exception as e:
             logging.error("Error loading config file in ConfigWindow: %s", e)
@@ -466,7 +479,8 @@ class ConfigWindow(QDialog):
                 "permanent_memory": self.permanent_memory_checkbox.isChecked(),
                 "memory_dir": self.memory_dir_input.text(),
                 "append_mode": getattr(self.parent(), "append_mode", False),
-                "textarea_font_sizes": getattr(self.parent(), "textarea_font_sizes", {})
+                "textarea_font_sizes": getattr(self.parent(), "textarea_font_sizes", {}),
+                "close_behavior": self.close_behavior_combo.currentText()
             }
             with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
                 json.dump(config, f, indent=4)
@@ -532,6 +546,10 @@ class CoDudeApp(QMainWindow):
         about_action = QAction("About", self)
         about_action.triggered.connect(self.show_about)
         codude_menu.addAction(about_action)
+
+        quit_action = QAction("Quit", self)
+        quit_action.triggered.connect(QApplication.instance().quit)
+        codude_menu.addAction(quit_action)
         logging.debug("Menu bar setup complete")
 
         # Content layout with QSplitter
@@ -571,29 +589,30 @@ class CoDudeApp(QMainWindow):
         self.custom_input_textedit.setMaximumHeight(100)
         self.left_layout.addWidget(self.custom_input_textedit)
 
-        # Font size controls for custom input
-        custom_font_layout = QHBoxLayout()
-        custom_font_layout.addStretch()
+        # Custom input controls layout
+        custom_controls_layout = QHBoxLayout()
+        
+        # Send button (left side, takes remaining space)
+        send_custom_button = QPushButton("Send", self)
+        send_custom_button.setToolTip("Send the custom command to the LLM.")
+        send_custom_button.clicked.connect(self.send_custom_command)
+        custom_controls_layout.addWidget(send_custom_button, 1)  # Stretch factor 1
+        
+        # Spacer between Send and font buttons
+        custom_controls_layout.addSpacing(10)
+        
+        # Font size buttons (right side)
         custom_font_up = QPushButton("↑", self)
         custom_font_up.setFixedSize(30, 30)
         custom_font_up.clicked.connect(lambda: self.adjust_textarea_font(self.custom_input_textedit, 1))
-        custom_font_layout.addWidget(custom_font_up)
+        custom_controls_layout.addWidget(custom_font_up)
+        
         custom_font_down = QPushButton("↓", self)
         custom_font_down.setFixedSize(30, 30)
         custom_font_down.clicked.connect(lambda: self.adjust_textarea_font(self.custom_input_textedit, -1))
-        custom_font_layout.addWidget(custom_font_down)
-        self.left_layout.addLayout(custom_font_layout)
-
-        # Send Custom Command Button
-        send_custom_button = QPushButton("Send Custom Command", self)
-        send_custom_button.setToolTip("Send the custom command to the LLM.")
-        send_custom_button.clicked.connect(self.send_custom_command)
-        self.left_layout.addWidget(send_custom_button)
-
-        # Debug Font Sizes Button
-        debug_font_button = QPushButton("Debug Font Sizes", self)
-        debug_font_button.clicked.connect(self.debug_font_sizes)
-        self.left_layout.addWidget(debug_font_button)
+        custom_controls_layout.addWidget(custom_font_down)
+        
+        self.left_layout.addLayout(custom_controls_layout)
 
         self.splitter.addWidget(left_widget)
         logging.debug("Left column (recipes and custom input) setup complete")
@@ -649,29 +668,34 @@ class CoDudeApp(QMainWindow):
         self.results_textedit.setToolTip("LLM responses are displayed here when in-app results are enabled.")
         self.results_textedit.textChanged.connect(self.on_results_text_changed)
         results_layout.addWidget(self.results_textedit, 1)
-        # Font size controls for results
-        results_font_layout = QHBoxLayout()
-        results_font_layout.addStretch()
+        # Font size controls for results (moved below textedit)
         results_font_up = QPushButton("↑", self)
         results_font_up.setFixedSize(30, 30)
         results_font_up.clicked.connect(lambda: self.adjust_textarea_font(self.results_textedit, 1))
-        results_font_layout.addWidget(results_font_up)
-        results_font_down = QPushButton("↓", self)
-        results_font_down.setFixedSize(30, 30)
-        results_font_down.clicked.connect(lambda: self.adjust_textarea_font(self.results_textedit, -1))
-        results_font_layout.addWidget(results_font_down)
-        results_layout.addLayout(results_font_layout)
+        results_font_up.setVisible(self.results_in_app)
         # Append Mode Toggle and Buttons
         results_controls_layout = QHBoxLayout()
         self.append_mode_checkbox = QCheckBox("Append Mode", self)
         self.append_mode_checkbox.stateChanged.connect(self.save_append_mode)
         results_controls_layout.addWidget(self.append_mode_checkbox)
+        
         export_results_button = QPushButton("Export to Markdown", self)
         export_results_button.clicked.connect(self.export_results_to_markdown)
         results_controls_layout.addWidget(export_results_button)
         copy_results_button = QPushButton("Copy to Clipboard", self)
         copy_results_button.clicked.connect(self.copy_results_to_clipboard)
         results_controls_layout.addWidget(copy_results_button)
+        
+        # Add 10px spacing between Copy button and font size buttons
+        results_controls_layout.addSpacing(10)
+        
+        # Add font size buttons to controls layout
+        results_font_down = QPushButton("↓", self)
+        results_font_down.setFixedSize(30, 30)
+        results_font_down.clicked.connect(lambda: self.adjust_textarea_font(self.results_textedit, -1))
+        results_font_down.setVisible(self.results_in_app)
+        results_controls_layout.addWidget(results_font_up)
+        results_controls_layout.addWidget(results_font_down)
         results_layout.addLayout(results_controls_layout)
         self.splitter.addWidget(self.results_container)
         self.results_container.setVisible(self.results_in_app)
@@ -851,6 +875,7 @@ class CoDudeApp(QMainWindow):
             self.memory_dir = ""
             self.append_mode = False
             self.textarea_font_sizes = {}
+            self.close_behavior = "Exit"
             setup_logging('Normal')
             with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
                 json.dump(default_config, f, indent=4)
@@ -1322,7 +1347,24 @@ class CoDudeApp(QMainWindow):
                 self.save_textarea_changes(self.active_memory_index, self.results_textedit.toPlainText())
             for window in self.result_windows[:]:
                 window.close()
-            QApplication.instance().quit()
+            
+            config = {}
+            if os.path.exists(CONFIG_FILE):
+                with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+            close_behavior = config.get("close_behavior", "Exit")
+
+            if close_behavior == "Minimize to Tray":
+                event.ignore()
+                self.hide()
+                self.tray_icon.showMessage(
+                    "CoDude",
+                    "CoDude is running in the background.",
+                    QSystemTrayIcon.Information,
+                    2000
+                )
+            else:
+                QApplication.instance().quit()
         except Exception as e:
             logging.error("Error in closeEvent: %s", e)
 
@@ -1511,6 +1553,14 @@ def main():
         app = QApplication(sys.argv)
         app.setQuitOnLastWindowClosed(False)
         logging.debug("QApplication initialized")
+        
+        # Hide console window when built as executable and not in debug mode
+        if sys.platform == 'win32' and hasattr(sys, '_MEIPASS'):
+            import ctypes
+            console_visible = logging.getLogger().getEffectiveLevel() <= logging.DEBUG
+            ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 
+                                          1 if console_visible else 0)
+        
         window = CoDudeApp()
         logging.debug("CoDudeApp instance created")
         sys.exit(app.exec_())

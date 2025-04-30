@@ -38,4 +38,4 @@
 
 **Super-Roast Text**: Roast the following text as a disappointed superhero:
 
-**Insult Politely**: Write an ultra-polite but insulting reply that will enrage the person that wrote the text I'll give you, but in a way they'd be unable to treat it as an actual insult. The text the idiot wrote is:
+**Insult Politely**: Write an ultra-polite but insulting reply that will enrage the person who wrote the text I'll give you, but in a way they'd be unable to treat it as an actual insult. The text the idiot wrote is:
