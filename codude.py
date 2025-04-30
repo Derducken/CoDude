@@ -14,13 +14,27 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout
 from PyQt5.QtGui import QIcon, QKeySequence, QFont, QIntValidator
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QEvent
 
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-ABOUT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Readme.md")
-LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "codude.log")
+def get_base_path():
+    """Get the base path for file operations, works for both dev and PyInstaller"""
+    if getattr(sys, 'frozen', False):
+        # First try the executable's directory
+        exe_dir = os.path.dirname(sys.executable)
+        # Then fall back to PyInstaller temp directory
+        base_path = exe_dir if os.path.exists(exe_dir) else sys._MEIPASS
+    else:
+        # Running in normal Python environment
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return base_path
+
+BASE_PATH = get_base_path()
+CONFIG_FILE = os.path.join(BASE_PATH, "config.json")
+ABOUT_FILE = os.path.join(BASE_PATH, "Readme.md")
+LOG_FILE = os.path.join(BASE_PATH, "codude.log")
 
 # Initialize logging
-def setup_logging(level='Normal'):
+def setup_logging(level='Normal', output='Both'):
     levels = {
+        'None': logging.NOTSET,
         'Minimal': logging.ERROR,
         'Normal': logging.WARNING,
         'Extended': logging.INFO,
@@ -30,25 +44,25 @@ def setup_logging(level='Normal'):
         # Clear any existing handlers
         logging.getLogger().handlers = []
         
-        # Set up file handler
-        file_handler = logging.FileHandler(
-            filename=LOG_FILE,
-            mode='a',
-            encoding='utf-8'
-        )
-        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-        
-        # Set up console handler
-        console_handler = logging.StreamHandler()
-        console_handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
-        
-        # Get the root logger
         logger = logging.getLogger()
         logger.setLevel(levels.get(level, logging.WARNING))
         
-        # Add both handlers
-        logger.addHandler(file_handler)
-        logger.addHandler(console_handler)
+        # Clear existing handlers
+        logger.handlers = []
+        
+        if output in ['File', 'Both'] and level != 'None':
+            file_handler = logging.FileHandler(
+                filename=LOG_FILE,
+                mode='a',
+                encoding='utf-8'
+            )
+            file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+            logger.addHandler(file_handler)
+            
+        if output in ['Terminal', 'Both'] and level != 'None':
+            console_handler = logging.StreamHandler()
+            console_handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
+            logger.addHandler(console_handler)
         
         # Create log file if it doesn't exist
         if not os.path.exists(LOG_FILE):
@@ -56,8 +70,7 @@ def setup_logging(level='Normal'):
                 f.write("")
         os.chmod(LOG_FILE, 0o666)
         
-        logging.debug("Logging initialized with level: %s", level)
-        logging.debug("Logging to both file and console")
+        logging.debug("Logging initialized with level: %s, output: %s", level, output)
     except Exception as e:
         print(f"Error setting up logging: {e}")
 
@@ -534,10 +547,22 @@ class ConfigWindow(QDialog):
         logging_layout.addWidget(logging_label)
         self.logging_combo = QComboBox(self)
         self.logging_combo.setFixedHeight(20)
-        self.logging_combo.addItems(['Minimal', 'Normal', 'Extended', 'Everything'])
+        self.logging_combo.addItems(['None', 'Minimal', 'Normal', 'Extended', 'Everything'])
         logging_layout.addWidget(self.logging_combo)
         self.standardize_layout(logging_layout)
         self.layout.addLayout(logging_layout)
+
+        # 16. Logging Output
+        logging_output_layout = QHBoxLayout()
+        logging_output_label = QLabel("Logging Output:", self)
+        logging_output_label.setFixedHeight(20)
+        logging_output_layout.addWidget(logging_output_label)
+        self.logging_output_combo = QComboBox(self)
+        self.logging_output_combo.setFixedHeight(20)
+        self.logging_output_combo.addItems(['Terminal', 'File', 'Both'])
+        logging_output_layout.addWidget(self.logging_output_combo)
+        self.standardize_layout(logging_output_layout)
+        self.layout.addLayout(logging_output_layout)
 
         # 14. Close Behavior
         close_behavior_layout = QHBoxLayout()
@@ -619,6 +644,7 @@ class ConfigWindow(QDialog):
                     self.permanent_memory_checkbox.setChecked(config.get("permanent_memory", False))
                     self.memory_dir_input.setText(config.get("memory_dir", ""))
                     self.close_behavior_combo.setCurrentText(config.get("close_behavior", "Exit"))
+                    self.timeout_input.setText(str(config.get("llm_timeout", 30)))
             logging.debug("Config loaded successfully in ConfigWindow")
         except Exception as e:
             logging.error("Error loading config file in ConfigWindow: %s", e)
@@ -1945,14 +1971,22 @@ class CoDudeApp(QMainWindow):
 def main():
     logging.info("Starting CoDude application")
     try:
+        # Load config to check logging level before initializing app
+        config = {}
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+        
+        logging_level = config.get('logging_level', 'Normal')
+        
         app = QApplication(sys.argv)
         app.setQuitOnLastWindowClosed(False)
         logging.debug("QApplication initialized")
         
-        # Hide console window when built as executable and not in debug mode
+        # Hide console window when built as executable and logging level is None
         if sys.platform == 'win32' and hasattr(sys, '_MEIPASS'):
             import ctypes
-            console_visible = logging.getLogger().getEffectiveLevel() <= logging.DEBUG
+            console_visible = logging_level != 'None' and logging.getLogger().getEffectiveLevel() <= logging.DEBUG
             ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 
                                           1 if console_visible else 0)
         
