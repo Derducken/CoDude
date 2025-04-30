@@ -11,12 +11,12 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout
                              QSystemTrayIcon, QMenu, QAction, QFileDialog, QMessageBox, QLineEdit, QDialog, QCheckBox, 
                              QScrollArea, QMenuBar, QProgressBar, QTabWidget, QListWidget, QListWidgetItem, QComboBox, 
                              QShortcut, QSlider, QSizePolicy, QSpacerItem, QSplitter)
-from PyQt5.QtGui import QIcon, QKeySequence, QFont
+from PyQt5.QtGui import QIcon, QKeySequence, QFont, QIntValidator
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QEvent
 
-CONFIG_FILE = "config.json"
-ABOUT_FILE = "About.md"
-LOG_FILE = "codude.log"
+CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+ABOUT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Readme.md")
+LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "codude.log")
 
 # Initialize logging
 def setup_logging(level='Normal'):
@@ -27,20 +27,37 @@ def setup_logging(level='Normal'):
         'Everything': logging.DEBUG
     }
     try:
-        logging.basicConfig(
+        # Clear any existing handlers
+        logging.getLogger().handlers = []
+        
+        # Set up file handler
+        file_handler = logging.FileHandler(
             filename=LOG_FILE,
-            level=levels.get(level, logging.WARNING),
-            format='%(asctime)s - %(levelname)s - %(message)s',
-            filemode='a',
-            encoding='utf-8',
-            force=True
+            mode='a',
+            encoding='utf-8'
         )
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        
+        # Set up console handler
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
+        
+        # Get the root logger
+        logger = logging.getLogger()
+        logger.setLevel(levels.get(level, logging.WARNING))
+        
+        # Add both handlers
+        logger.addHandler(file_handler)
+        logger.addHandler(console_handler)
+        
         # Create log file if it doesn't exist
         if not os.path.exists(LOG_FILE):
             with open(LOG_FILE, 'a', encoding='utf-8') as f:
                 f.write("")
         os.chmod(LOG_FILE, 0o666)
+        
         logging.debug("Logging initialized with level: %s", level)
+        logging.debug("Logging to both file and console")
     except Exception as e:
         print(f"Error setting up logging: {e}")
 
@@ -82,11 +99,12 @@ class LLMRequestThread(QThread):
     response_received = pyqtSignal(str)
     error_occurred = pyqtSignal(str)
 
-    def __init__(self, llm_url, prompt, text):
+    def __init__(self, llm_url, prompt, text, timeout=30):
         QThread.__init__(self)
         self.llm_url = llm_url
         self.prompt = prompt
         self.text = text
+        self.timeout = timeout
 
     def run(self):
         try:
@@ -106,15 +124,104 @@ class LLMRequestThread(QThread):
                 self.error_occurred.emit("LLM URL is not configured.")
                 return
 
-            response = requests.post(f"{self.llm_url}/v1/chat/completions", json=payload, headers=headers)
-            response.raise_for_status()
+            try:
+                # Use configured timeout to prevent hanging
+                response = requests.post(f"{self.llm_url}/v1/chat/completions", 
+                                       json=payload, 
+                                       headers=headers,
+                                       timeout=self.timeout)
+                response.raise_for_status()
 
-            result = response.json()
-            if result and result.get('choices'):
-                llm_reply = result['choices'][0]['message']['content']
-                self.response_received.emit(llm_reply)
-            else:
-                self.error_occurred.emit("Invalid response from LLM.")
+                # Log raw response for debugging
+                raw_response = response.text
+                logging.debug(f"Raw LLM response: {raw_response[:500]}...")
+
+                try:
+                    result = response.json()
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"Invalid JSON response: {e}\nResponse: {raw_response[:500]}")
+
+                if not result:
+                    raise ValueError("Empty response from LLM")
+
+                if not isinstance(result, dict):
+                    raise ValueError(f"Invalid response format. Expected dict, got {type(result)}")
+
+                # Check for error in response
+                if 'error' in result:
+                    error_msg = result['error'].get('message', 'Unknown error')
+                    logging.error(f"LLM error: {error_msg}")
+                    raise ValueError(f"LLM error: {error_msg}")
+
+                # Safely extract content with multiple fallbacks
+                content = None
+                if 'choices' in result:
+                    if not isinstance(result['choices'], list):
+                        logging.warning("LLM choices is not a list")
+                        raise ValueError("Invalid response format: choices is not a list")
+                    elif len(result['choices']) == 0:
+                        logging.warning("LLM response contains empty choices array")
+                        raise ValueError("Empty choices array in LLM response")
+                    else:
+                        choice = result['choices'][0]
+                        if not isinstance(choice, dict):
+                            logging.warning("Choice is not a dict")
+                            raise ValueError("Invalid choice format in LLM response")
+                        if 'message' not in choice:
+                            logging.debug("No message in choice")
+                            raise ValueError("Missing message in LLM response choice")
+                        message = choice['message']
+                        if not isinstance(message, dict):
+                            logging.warning("Message is not a dict")
+                            raise ValueError("Invalid message format in LLM response")
+                        if 'content' not in message:
+                            logging.warning("Message missing content")
+                            raise ValueError("Missing content in LLM response message")
+                        content = message['content']
+                        logging.debug("Extracted content from choices[0].message.content")
+                
+                if content is None:
+                    # Try alternative response formats
+                    if 'text' in result:
+                        content = result['text']
+                        logging.debug("Extracted content from 'text' field")
+                    elif 'response' in result:
+                        content = result['response'] 
+                        logging.debug("Extracted content from 'response' field")
+                    else:
+                        error_msg = "No valid content found in LLM response"
+                        logging.error(f"{error_msg}. Response keys: {list(result.keys())}")
+                        raise ValueError(error_msg)
+
+                if not isinstance(content, str):
+                    error_msg = f"Invalid content type: {type(content)}"
+                    logging.error(error_msg)
+                    raise ValueError(error_msg)
+
+                logging.debug(f"Emitting response_received signal with content: {content[:100]}...")
+                try:
+                    self.response_received.emit(content)
+                    logging.debug("Response successfully emitted")
+                except Exception as emit_error:
+                    logging.error(f"Error emitting response: {emit_error}")
+                    self.error_occurred.emit(f"Failed to process LLM response: {emit_error}")
+
+            except requests.exceptions.Timeout:
+                error_msg = "LLM request timed out after 30 seconds"
+                logging.error(error_msg)
+                self.error_occurred.emit(error_msg)
+            except requests.exceptions.RequestException as e:
+                error_msg = f"Error communicating with LLM: {e}"
+                logging.error(error_msg)
+                self.error_occurred.emit(error_msg)
+            except ValueError as e:
+                error_msg = f"Invalid LLM response: {e}"
+                logging.error(error_msg)
+                self.error_occurred.emit(error_msg)
+            except Exception as e:
+                error_msg = f"Unexpected error processing LLM response: {e}"
+                logging.error(error_msg)
+                self.error_occurred.emit(error_msg)
         except requests.exceptions.RequestException as e:
             self.error_occurred.emit(f"Error communicating with LLM: {e}")
         except Exception as e:
@@ -124,17 +231,39 @@ class LLMRequestThread(QThread):
 class ResultWindow(QMainWindow):
     def __init__(self, response_text, parent=None, memory_index=None):
         super().__init__(parent)
-        self.setWindowTitle("CoDude Result")
-        self.setGeometry(200, 200, 600, 400)
         self.parent = parent
         self.memory_index = memory_index
+        
+        # Get command and captured text from parent's memory
+        if parent and hasattr(parent, '_memory') and memory_index is not None:
+            captured_text, prompt, _, _ = parent._memory[memory_index]
+            
+            # Extract command name (text between ** **)
+            command_name = prompt.split('**')[1] if '**' in prompt else prompt.split(':')[0]
+            
+            self.setWindowTitle(f"CoDude: {command_name}")
+            
+            # Format response text with markdown and special think blocks
+            formatted_response = self.format_response(response_text)
+            
+            formatted_text = f"""
+                <p><b>Command:</b><br/>{command_name}</p>
+                <p><b>Text:</b><br/>{captured_text}</p>
+                <p><b>LLM Reply:</b><br/>{formatted_response}</p>
+            """
+        else:
+            self.setWindowTitle("CoDude: Custom Command")
+            formatted_text = f"<b>LLM Reply:</b>\n{response_text}"
+            
+        self.setGeometry(200, 200, 600, 400)
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
 
         self.response_textedit = QTextEdit(self)
-        self.response_textedit.setText(response_text)
+        self.response_textedit.setAcceptRichText(True)
+        self.response_textedit.setText(formatted_text)
         self.response_textedit.textChanged.connect(self.on_text_changed)
         layout.addWidget(self.response_textedit)
 
@@ -162,11 +291,8 @@ class ResultWindow(QMainWindow):
 
     def closeEvent(self, event):
         self.on_text_changed()
-        if self.parent and hasattr(self.parent, 'result_windows'):
-            try:
-                self.parent.result_windows.remove(self)
-            except ValueError:
-                pass
+        if self.parent and hasattr(self.parent, 'result_windows') and self in self.parent.result_windows:
+            self.parent.result_windows.remove(self)
         super().closeEvent(event)
 
     def changeEvent(self, event):
@@ -175,6 +301,22 @@ class ResultWindow(QMainWindow):
                 self.hide()
                 event.ignore()
         super().changeEvent(event)
+
+    def format_response(self, text):
+        """Format response text with markdown and special think blocks"""
+        # Convert markdown to HTML
+        text = text.replace('\n', '<br/>')
+        
+        # Handle think blocks with special styling
+        text = text.replace('<think>', '<div style="background-color: #f0f0f0; border-radius: 5px; padding: 5px; color: #555; font-style: italic;">')
+        text = text.replace('</think>', '</div>')
+        
+        # Basic markdown formatting
+        text = text.replace('**', '<b>').replace('**', '</b>')
+        text = text.replace('*', '<i>').replace('*', '</i>')
+        text = text.replace('`', '<code>').replace('`', '</code>')
+        
+        return text
 
     def export_to_markdown(self):
         options = QFileDialog.Options()
@@ -198,11 +340,17 @@ class MemoryEntryWidget(QWidget):
         super().__init__(parent)
         self.filename = filename
         self.layout = QHBoxLayout(self)
-        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setContentsMargins(5, 5, 5, 5)
         self.layout.setSpacing(5)
         
-        self.label = QLabel(text, self)
+        # Limit text to ~15 words
+        short_text = ' '.join(text.split()[:15])
+        if len(text.split()) > 15:
+            short_text += '...'
+            
+        self.label = QLabel(short_text, self)
         self.label.setWordWrap(True)
+        self.label.setMinimumHeight(40)  # Allow for 2 lines of text
         self.layout.addWidget(self.label, 1)
         
         self.delete_button = QPushButton("Delete", self)
@@ -225,9 +373,9 @@ class ConfigWindow(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("CoDude Configuration")
-        self.setGeometry(300, 300, 400, 400)
+        self.setGeometry(300, 300, 400, 500)  # Increased height for new controls
 
-        # Main layout
+        # Main layout with scroll area to accommodate all controls
         self.layout = QVBoxLayout(self)
         self.layout.setSpacing(3)
         self.layout.setContentsMargins(5, 5, 5, 5)
@@ -361,10 +509,25 @@ class ConfigWindow(QDialog):
         self.standardize_layout(memory_dir_layout)
         self.layout.addLayout(memory_dir_layout)
 
-        # 12. Thematic Spacer (10px before Logging Level)
+        # 12. Thematic Spacer (10px before Timeout)
         self.layout.addSpacerItem(QSpacerItem(20, 10, QSizePolicy.Minimum, QSizePolicy.Fixed))
 
-        # 13. Logging Level
+        # 13. LLM Timeout
+        timeout_layout = QHBoxLayout()
+        timeout_label = QLabel("LLM Timeout (seconds):", self)
+        timeout_label.setFixedHeight(20)
+        timeout_layout.addWidget(timeout_label)
+        self.timeout_input = QLineEdit(self)
+        self.timeout_input.setFixedHeight(20)
+        self.timeout_input.setValidator(QIntValidator(5, 300, self))
+        timeout_layout.addWidget(self.timeout_input)
+        self.standardize_layout(timeout_layout)
+        self.layout.addLayout(timeout_layout)
+
+        # 14. Thematic Spacer (10px before Logging Level)
+        self.layout.addSpacerItem(QSpacerItem(20, 10, QSizePolicy.Minimum, QSizePolicy.Fixed))
+
+        # 15. Logging Level
         logging_layout = QHBoxLayout()
         logging_label = QLabel("Logging Level:", self)
         logging_label.setFixedHeight(20)
@@ -462,8 +625,61 @@ class ConfigWindow(QDialog):
 
     def save_config(self):
         try:
+            # Validate LLM URL
+            llm_url = self.llm_url_input.text()
+            if not llm_url:
+                reply = QMessageBox.question(
+                    self, 
+                    "LLM URL Not Set",
+                    "You haven't configured an LLM URL. The default (http://127.0.0.1:7777) will be used.\n\nDo you want to continue?",
+                    QMessageBox.Yes | QMessageBox.No
+                )
+                if reply == QMessageBox.No:
+                    return
+
+            # Handle Permanent Memory directory
+            permanent_memory = self.permanent_memory_checkbox.isChecked()
+            memory_dir = self.memory_dir_input.text()
+            if permanent_memory and not memory_dir:
+                reply = QMessageBox.question(
+                    self,
+                    "Create Memory Directory",
+                    "Permanent Memory is enabled but no directory is selected. Would you like to:\n\n"
+                    "1. Create a 'memory' directory in the app folder automatically\n"
+                    "2. Cancel and select a directory manually",
+                    QMessageBox.Yes | QMessageBox.No
+                )
+                if reply == QMessageBox.Yes:
+                    memory_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory")
+                    os.makedirs(memory_dir, exist_ok=True)
+                    self.memory_dir_input.setText(memory_dir)
+                else:
+                    return
+
+            # Calculate splitter sizes with strict 30/70 ratio
+            parent = self.parent()
+            if parent:
+                total_width = parent.width()
+                # Recipes gets exactly 30%
+                recipes_width = int(total_width * 0.3)
+                remaining_width = total_width - recipes_width
+                
+                if self.results_display_combo.currentText() == "In-App Textarea":
+                    # Split middle/right 50/50 of remaining width
+                    middle_width = int(remaining_width * 0.5)
+                    right_width = remaining_width - middle_width
+                else:
+                    # Give all remaining width to middle
+                    middle_width = remaining_width
+                    right_width = 0
+                
+                splitter_sizes = [recipes_width, middle_width, right_width]
+                logging.debug("Calculated splitter sizes: %s (total width: %d)", splitter_sizes, total_width)
+            else:
+                splitter_sizes = [300, 700, 0]  # Default fallback with 30/70 ratio
+
             config = {
-                "llm_url": self.llm_url_input.text(),
+                "llm_url": llm_url if llm_url else "http://127.0.0.1:7777",
                 "recipes_file": self.recipes_file_input.text(),
                 "hotkey": {
                     "ctrl": self.ctrl_checkbox.isChecked(),
@@ -476,11 +692,13 @@ class ConfigWindow(QDialog):
                 "group_states": getattr(self.parent(), "_group_states", {}),
                 "results_display": self.results_display_combo.currentText(),
                 "font_size": self.font_size_slider.value(),
-                "permanent_memory": self.permanent_memory_checkbox.isChecked(),
-                "memory_dir": self.memory_dir_input.text(),
+                "permanent_memory": permanent_memory,
+                "memory_dir": memory_dir,
                 "append_mode": getattr(self.parent(), "append_mode", False),
                 "textarea_font_sizes": getattr(self.parent(), "textarea_font_sizes", {}),
-                "close_behavior": self.close_behavior_combo.currentText()
+                "close_behavior": self.close_behavior_combo.currentText(),
+                "llm_timeout": int(self.timeout_input.text()) if self.timeout_input.text() else 30,
+                "splitter_sizes": splitter_sizes
             }
             with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
                 json.dump(config, f, indent=4)
@@ -518,11 +736,8 @@ class CoDudeApp(QMainWindow):
         self._theme = "Light"
         self.active_memory_index = None
         self._deleting_memory = False
+        self.splitter_sizes = [300, 400, 300]  # Default splitter sizes
         logging.debug("Initialized group states, memory, group buttons, result windows, and config defaults")
-
-        # Load configuration early
-        self.validate_and_load_config()
-        logging.debug("Configuration loaded")
 
         # Central widget and main layout
         central_widget = QWidget()
@@ -554,10 +769,16 @@ class CoDudeApp(QMainWindow):
 
         # Content layout with QSplitter
         self.splitter = QSplitter(Qt.Horizontal)
+        self.splitter.setHandleWidth(5)  # Make handles slightly more visible
         main_layout.addWidget(self.splitter)
+
+        # Load configuration after UI elements are initialized
+        self.validate_and_load_config()
+        logging.debug("Configuration loaded")
 
         # Left column: Recipes
         left_widget = QWidget()
+        left_widget.setMinimumWidth(30)
         self.left_layout = QVBoxLayout(left_widget)
         self.left_layout.setContentsMargins(0, 0, 0, 0)
         
@@ -619,6 +840,7 @@ class CoDudeApp(QMainWindow):
 
         # Middle column: Captured Text and Memory
         tabs_widget = QWidget()
+        tabs_widget.setMinimumWidth(30)
         tabs_layout = QVBoxLayout(tabs_widget)
         right_tabs = QTabWidget(self)
 
@@ -701,10 +923,40 @@ class CoDudeApp(QMainWindow):
         self.results_container.setVisible(self.results_in_app)
         logging.debug("Right column (LLM results) setup complete")
 
-        # Set initial splitter sizes
-        self.splitter.setSizes([300, 200, 300])
-        self.splitter.splitterMoved.connect(self.log_splitter_sizes)
-        logging.debug("Splitter initialized with sizes [300, 200, 300]")
+        # Set initial splitter sizes based on config or defaults
+        self.splitter_sizes = [200, 300, 300]  # More balanced default sizes
+        try:
+            if os.path.exists(CONFIG_FILE):
+                with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                    if 'splitter_sizes' in config:
+                        self.splitter_sizes = config['splitter_sizes']
+                        # Ensure we have 3 sizes and they're balanced
+                        if len(self.splitter_sizes) != 3:
+                            self.splitter_sizes = [200, 300, 300]
+                        # Prevent any column from being too small or too large
+                        total = sum(self.splitter_sizes)
+                        self.splitter_sizes = [
+                            max(150, min(400, self.splitter_sizes[0])),  # Recipes column
+                            max(200, min(500, self.splitter_sizes[1])),  # Middle column
+                            max(200, min(500, self.splitter_sizes[2]))   # Results column
+                        ]
+        except Exception as e:
+            logging.error("Error loading splitter sizes: %s", e)
+            self.splitter_sizes = [200, 300, 300]
+        
+        # Apply sizes with minimum widths
+        left_widget = self.splitter.widget(0)
+        middle_widget = self.splitter.widget(1)
+        right_widget = self.splitter.widget(2)
+        
+        left_widget.setMinimumWidth(50)
+        middle_widget.setMinimumWidth(50)
+        right_widget.setMinimumWidth(50)
+        
+        self.splitter.setSizes(self.splitter_sizes)
+        self.splitter.splitterMoved.connect(self.save_splitter_sizes)
+        logging.debug("Splitter initialized with sizes: %s", self.splitter_sizes)
 
         # Status bar with progress bar
         self.status_bar = self.statusBar()
@@ -761,9 +1013,21 @@ class CoDudeApp(QMainWindow):
         QTimer.singleShot(2000, self.start_hotkey_thread)
         logging.info("CoDudeApp initialization complete")
 
-    def log_splitter_sizes(self, pos, index):
-        sizes = self.splitter.sizes()
-        logging.debug("Splitter sizes updated: Recipes=%d, Tabs=%d, Results=%d", sizes[0], sizes[1], sizes[2])
+    def save_splitter_sizes(self, pos, index):
+        try:
+            sizes = self.splitter.sizes()
+            logging.debug("Splitter sizes before update: %s (pos: %d, index: %d)", sizes, pos, index)
+            self.splitter_sizes = sizes
+            
+            # Save to config
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            config['splitter_sizes'] = sizes
+            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=4)
+            logging.debug("Splitter sizes saved to config: %s", sizes)
+        except Exception as e:
+            logging.error("Error saving splitter sizes: %s", e)
 
     def start_hotkey_thread(self):
         try:
@@ -815,8 +1079,8 @@ class CoDudeApp(QMainWindow):
 
     def validate_and_load_config(self):
         default_config = {
-            "llm_url": "",
-            "recipes_file": "",
+            "llm_url": "http://127.0.0.1:7777",
+            "recipes_file": os.path.join(os.path.dirname(os.path.abspath(__file__)), "recipes.md"),
             "hotkey": {"ctrl": True, "shift": False, "alt": True, "main_key": "c"},
             "logging_level": "Normal",
             "theme": "Light",
@@ -826,14 +1090,22 @@ class CoDudeApp(QMainWindow):
             "permanent_memory": False,
             "memory_dir": "",
             "append_mode": False,
-            "textarea_font_sizes": {}
+            "textarea_font_sizes": {},
+            "splitter_sizes": [300, 400, 300]
         }
         try:
             logging.debug("Validating and loading config")
+            os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
             if not os.path.exists(CONFIG_FILE):
                 logging.warning("Config file not found, creating default")
                 with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
                     json.dump(default_config, f, indent=4)
+                # Set default recipes file path if it exists
+                default_recipes = os.path.join(os.path.dirname(os.path.abspath(__file__)), "recipes.md")
+                if os.path.exists(default_recipes):
+                    default_config['recipes_file'] = default_recipes
+                    with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+                        json.dump(default_config, f, indent=4)
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                 config = json.load(f)
                 config['llm_url'] = config.get('llm_url', "")
@@ -854,14 +1126,34 @@ class CoDudeApp(QMainWindow):
                 self.llm_url = config['llm_url']
                 self.recipes_file = config['recipes_file']
                 self._group_states = config.get('group_states', {})
-                self.results_in_app = config.get('results_display', 'Separate Windows') == 'In-App Textarea'
-                self.font_size = config.get('font_size', 10)
-                self.permanent_memory = config.get('permanent_memory', False)
-                self.memory_dir = config.get('memory_dir', '')
-                self.append_mode = config.get('append_mode', False)
-                self.textarea_font_sizes = config.get('textarea_font_sizes', {})
-                setup_logging(config['logging_level'])
-                self._theme = config['theme']
+            self.results_in_app = config.get('results_display', 'Separate Windows') == 'In-App Textarea'
+            # Apply splitter sizes based on display mode
+            # Apply strict 30/70 ratio on startup
+            total_width = self.width()
+            recipes_width = int(total_width * 0.3)
+            remaining_width = total_width - recipes_width
+            
+            if self.results_in_app:
+                # Split middle/right 50/50 of remaining width
+                middle_width = int(remaining_width * 0.5)
+                right_width = remaining_width - middle_width
+            else:
+                # Give all remaining width to middle
+                middle_width = remaining_width
+                right_width = 0
+                
+            self.splitter.setSizes([recipes_width, middle_width, right_width])
+            logging.debug("Applied splitter sizes on startup: %s (total width: %d)", 
+                        [recipes_width, middle_width, right_width], total_width)
+            
+            self.font_size = config.get('font_size', 10)
+            self.permanent_memory = config.get('permanent_memory', False)
+            self.memory_dir = config.get('memory_dir', '')
+            self.append_mode = config.get('append_mode', False)
+            self.textarea_font_sizes = config.get('textarea_font_sizes', {})
+            self.llm_timeout = config.get('llm_timeout', 30)
+            setup_logging(config['logging_level'])
+            self._theme = config['theme']
             logging.debug("Config loaded successfully")
         except Exception as e:
             logging.error("Config validation failed: %s", e)
@@ -952,6 +1244,16 @@ class CoDudeApp(QMainWindow):
             logging.error("Error logging widget sizes: %s", e)
 
     def load_recipes(self):
+        # Ensure recipes_file path is absolute
+        if self.recipes_file and not os.path.isabs(self.recipes_file):
+            self.recipes_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), self.recipes_file)
+            # Update config with absolute path
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            config['recipes_file'] = self.recipes_file
+            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=4)
+
         logging.info("Loading recipes from: %s", self.recipes_file)
         while self.recipe_buttons_layout.count():
             item = self.recipe_buttons_layout.takeAt(0)
@@ -974,6 +1276,39 @@ class CoDudeApp(QMainWindow):
 
         if not self.recipes_file or not os.path.exists(self.recipes_file):
             logging.warning("Recipes file not found or not specified: %s", self.recipes_file)
+            
+            # Offer to download recipes.md from GitHub
+            reply = QMessageBox.question(
+                self,
+                "Recipes File Missing",
+                "The recipes.md file is missing. Would you like to download it from GitHub?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            
+            if reply == QMessageBox.Yes:
+                try:
+                    response = requests.get("https://raw.githubusercontent.com/Derducken/CoDude/main/recipes.md")
+                    response.raise_for_status()
+                    
+                    # Save to current directory
+                    self.recipes_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "recipes.md")
+                    with open(self.recipes_file, 'w', encoding='utf-8') as f:
+                        f.write(response.text)
+                    
+                    # Update config
+                    with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                        config = json.load(f)
+                    config['recipes_file'] = self.recipes_file
+                    with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+                        json.dump(config, f, indent=4)
+                    
+                    QMessageBox.information(self, "Success", "recipes.md downloaded successfully!")
+                    self.load_recipes()  # Reload with new file
+                    return
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Failed to download recipes.md: {e}")
+            
+            # If user declined or download failed
             error_label = QLabel("No recipes file configured. Please set a valid recipes.md in Configure.")
             error_label.setStyleSheet("color: red;")
             self.recipe_buttons_layout.addWidget(error_label)
@@ -1138,7 +1473,7 @@ class CoDudeApp(QMainWindow):
             self.progress_bar.setVisible(True)
             self.progress_bar.setRange(0, 0)
 
-            self.llm_thread = LLMRequestThread(self.llm_url, prompt, captured_text)
+            self.llm_thread = LLMRequestThread(self.llm_url, prompt, captured_text, self.llm_timeout)
             self.llm_thread.response_received.connect(lambda resp: self.handle_llm_response(resp, captured_text, prompt))
             self.llm_thread.error_occurred.connect(self.handle_llm_error)
             self.llm_thread.start()
@@ -1151,41 +1486,80 @@ class CoDudeApp(QMainWindow):
         try:
             logging.info("LLM Response Received")
             self.progress_bar.setVisible(False)
+            
+            # Validate inputs
+            if not isinstance(response_text, str):
+                raise ValueError(f"Invalid response_text type: {type(response_text)}")
+            if not isinstance(captured_text, str):
+                raise ValueError(f"Invalid captured_text type: {type(captured_text)}")
+            if not isinstance(prompt, str):
+                raise ValueError(f"Invalid prompt type: {type(prompt)}")
+
             filename = None
-            if self.permanent_memory and self.memory_dir and os.path.exists(self.memory_dir):
-                safe_prompt = "".join(c for c in prompt[:50] if c.isalnum() or c in " -_").strip()
-                if not safe_prompt:
-                    safe_prompt = "memory_entry"
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"{safe_prompt}_{timestamp}.md"
-                file_path = os.path.join(self.memory_dir, filename)
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write(f"{captured_text}\n\n{prompt}\n\n{response_text}")
-                logging.debug("Saved memory entry to %s", file_path)
-            
-            if self.results_in_app:
-                if self.append_mode:
-                    current_text = self.results_textedit.toPlainText()
-                    if current_text:
-                        current_text += "\n\n"
-                    self.results_textedit.setPlainText(current_text + response_text)
+            try:
+                if self.permanent_memory and self.memory_dir and os.path.exists(self.memory_dir):
+                    safe_prompt = "".join(c for c in prompt[:50] if c.isalnum() or c in " -_").strip()
+                    if not safe_prompt:
+                        safe_prompt = "memory_entry"
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    filename = f"{safe_prompt}_{timestamp}.md"
+                    file_path = os.path.join(self.memory_dir, filename)
+                    with open(file_path, 'w', encoding='utf-8') as f:
+                        f.write(f"{captured_text}\n\n{prompt}\n\n{response_text}")
+                    logging.debug("Saved memory entry to %s", file_path)
+            except Exception as e:
+                logging.error("Error saving memory file: %s", e)
+                filename = None  # Continue without filename if saving fails
+
+            # First add to memory list to ensure index exists
+            try:
+                self._memory.append((captured_text, prompt, response_text, filename))
+                memory_index = len(self._memory) - 1
+                logging.debug("Added to memory list at index %d", memory_index)
+            except Exception as e:
+                logging.error("Failed to add to memory list: %s", e)
+                memory_index = -1  # Use invalid index if adding fails
+
+            try:
+                if self.results_in_app:
+                    if self.append_mode:
+                        current_text = self.results_textedit.toPlainText()
+                        if current_text:
+                            current_text += "\n\n---\n\n"
+                        self.results_textedit.setPlainText(current_text + response_text)
+                    else:
+                        self.results_textedit.setPlainText(response_text)
+                    self.active_memory_index = memory_index
                 else:
-                    self.results_textedit.setPlainText(response_text)
-                self.active_memory_index = len(self._memory)
-            else:
-                result_window = ResultWindow(response_text, self, len(self._memory))
-                result_window.show()
-                self.result_windows.append(result_window)
-                result_window.destroyed.connect(lambda: self.result_windows.remove(result_window))
-            
-            self._memory.append((captured_text, prompt, response_text, filename))
-            item_text = f"{prompt[:30]}... on {captured_text[:30]}..."
-            entry_widget = MemoryEntryWidget(item_text, filename)
-            list_item = QListWidgetItem(self.memory_list)
-            list_item.setSizeHint(entry_widget.sizeHint())
-            self.memory_list.setItemWidget(list_item, entry_widget)
-            entry_widget.delete_button.clicked.connect(lambda: self.delete_memory_entry(list_item))
-            logging.debug("Added response to memory")
+                    result_window = ResultWindow(response_text, self, memory_index)
+                    result_window.show()
+                    self.result_windows.append(result_window)
+                    result_window.destroyed.connect(lambda: self.result_windows.remove(result_window))
+            except Exception as e:
+                logging.error("Error displaying results: %s", e)
+                # Fallback to showing error in results area
+                self.results_textedit.setPlainText(f"Error displaying results: {e}\n\n{response_text}")
+                self.results_container.setVisible(True)
+
+            # Only create memory list item if we successfully added to memory list
+            if memory_index >= 0:
+                try:
+                    item_text = f"{prompt[:30]}... on {captured_text[:30]}..."
+                    entry_widget = MemoryEntryWidget(item_text, filename)
+                    list_item = QListWidgetItem(self.memory_list)
+                    list_item.setSizeHint(entry_widget.sizeHint())
+                    
+                    def make_delete_handler(item):
+                        return lambda: self.delete_memory_entry(item)
+                    entry_widget.delete_button.clicked.connect(make_delete_handler(list_item))
+                    
+                    self.memory_list.setItemWidget(list_item, entry_widget)
+                    logging.debug("Added memory list widget for index %d", memory_index)
+                except Exception as e:
+                    logging.error("Error creating memory list widget: %s", e)
+                    # Remove from memory list if widget creation failed
+                    if memory_index < len(self._memory):
+                        self._memory.pop(memory_index)
         except Exception as e:
             logging.error("Error in handle_llm_response: %s", e)
             QMessageBox.critical(self, "Error", f"Failed to handle LLM response: {e}")
@@ -1202,8 +1576,22 @@ class CoDudeApp(QMainWindow):
     def show_memory_entry(self, item):
         try:
             index = self.memory_list.row(item)
+            if index < 0 or index >= len(self._memory):
+                logging.error("Invalid memory index: %d", index)
+                return
+
             captured_text, prompt, response, filename = self._memory[index]
+            logging.debug("Showing memory entry %d: %s...", index, response[:50])
+
             if self.results_in_app:
+                # Ensure results pane is visible
+                self.results_container.setVisible(True)
+                
+                # Save any pending changes to current active entry
+                if self.active_memory_index is not None:
+                    self.save_textarea_changes(self.active_memory_index, self.results_textedit.toPlainText())
+
+                # Update results text
                 if self.append_mode:
                     current_text = self.results_textedit.toPlainText()
                     if current_text:
@@ -1211,13 +1599,17 @@ class CoDudeApp(QMainWindow):
                     self.results_textedit.setPlainText(current_text + response)
                 else:
                     self.results_textedit.setPlainText(response)
+                
+                # Set new active index and ensure text is visible
                 self.active_memory_index = index
+                self.results_textedit.ensureCursorVisible()
+                logging.debug("Updated in-app results for index %d", index)
             else:
                 result_window = ResultWindow(response, self, index)
                 result_window.show()
                 self.result_windows.append(result_window)
                 result_window.destroyed.connect(lambda: self.result_windows.remove(result_window))
-            logging.debug("Memory entry shown, index: %d", index)
+                logging.debug("Created separate window for index %d", index)
         except Exception as e:
             logging.error("Error in show_memory_entry: %s", e)
             QMessageBox.critical(self, "Error", f"Failed to show memory entry: {e}")
@@ -1333,13 +1725,16 @@ class CoDudeApp(QMainWindow):
                 logging.warning("About.md file not found")
                 QMessageBox.warning(self, "File Not Found", "About.md file not found.")
                 return
-            with open(ABOUT_FILE, 'r', encoding='utf-8') as f:
-                about_text = f.read()
-            QMessageBox.information(self, "About CoDude", about_text)
-            logging.debug("About dialog shown")
+            if sys.platform.startswith('win'):
+                os.startfile(ABOUT_FILE)
+            elif sys.platform.startswith('darwin'):
+                subprocess.run(['open', ABOUT_FILE])
+            else:
+                subprocess.run(['xdg-open', ABOUT_FILE])
+            logging.debug("About file opened in default editor")
         except Exception as e:
-            logging.error("Could not read About.md: %s", e)
-            QMessageBox.critical(self, "Error", f"Could not read About.md: {e}")
+            logging.error("Could not open About.md: %s", e)
+            QMessageBox.critical(self, "Error", f"Could not open About.md: {e}")
 
     def closeEvent(self, event):
         try:
