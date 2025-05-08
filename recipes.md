@@ -16,7 +16,7 @@
 
 **🪜 Suggest Article Structure**: Suggest a structure for a blog post or site article about the following text. Make sure to structure your reply for maximum readability using Obsidian-friendly markdown, like bolding important terms or key points (by enclosing them in double asterisks), using paragraphs, highlights (by enclosing the text-to-be-highlighted with double-equal signs, like "=="), and up to five levels of headings (by beginning the heading text with "#" followed by a space for H1 headings, "##" followed by a space for H2 headings, and so on). The text is:
 
-**🗜️ Summarize**: Summarize the following text. Make sure to structure your reply for maximum readability using Obsidian-friendly markdown, like bolding important terms or key points (by enclosing them in double asterisks), using paragraphs, highlights (by enclosing the text-to-be-highlighted with double-equal signs, like "=="), and up to five levels of headings (by beginning the heading text with "#" followed by a space for H1 headings, "##" followed by a space for H2 headings, and so on). The text is:
+**🗜️ Summarize**: Summarize the following text. Make sure to structure your reply for maximum readability using markdown. The text is:
 
 **🗜️ Summarize Plus**: Summarize the following text in one or two concise paragraphs:
 
