@@ -28,7 +28,11 @@
 
 **✍️ Fix Typos, Grammar, Syntax**: Act like my editor (or a smarter Grammarly) and fix my typos, grammatical, and syntax errors, while ensuring the text feels as if written by a native English speaker. Preserve structure, style, acronyms, and formatting. The text is:
 
-**✍️ Not Grammarly Plus**: Edit the text for grammar and readability as if reviewed by a writing assistant for a general audience of 15-year-olds. Provide both the edited version and a before/after comparison. The original text is:
+**✍️ Not Grammarly**: Act as a careful grammar and typo editor. Fix grammar, spelling, punctuation, and remove extra spaces (double or stray). Do NOT alter technical terms, acronyms, product/tool names (e.g., TestDisk, S.M.A.R.T.), code, commands, or formatting (Markdown, inline code, CLI syntax). Do not change sentence structure, tone, or writing style. Return the corrected text only. The text to check is:
+
+**✍️ Not Grammarly Plus**: Fix syntax and grammar errors, double or "stray" spaces, and improper capitalization (excluding acronyms). DON'T change ANY other aspect of the text. Preserve technical terms, markdown, HTML, and other markup. Provide both the edited version and a before/after comparison. The original text is:
+
+**✍️ Not Grammarly Hyper**: Edit the text for grammar and readability as if reviewed by a writing assistant for a general audience of 15-year-olds. Provide both the edited version and a before/after comparison. The original text is:
 
 **🧐 Expert Editor**: Review and correct grammatical errors in my content. Ensure clarity, correctness, and readability without altering structure or style:
 
