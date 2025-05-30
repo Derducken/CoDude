@@ -24,12 +24,11 @@ You can edit all recipes, or replace them with your own, by editing the Recipes.
 
 Notice that the "Command Name" is in bold (two asterisks before and after it in Markdown syntax), and followed by ":" and a space. The instructions are normal text, and should all be structured as a single line of text - no breaks, no pressing Enter and adding lists. They should also end with ":". The text you selected and copied to the clipboard is appended automatically after the command.
 
-You can group commands by using typical Markdown headings. Every heading is automatically recognized as a group, and the commands underneath it as members of that group. Checking the recipes.md file in combination of "how the default commands show up on the app's interface" will help you make better sense of "how it works".
+You can group commands by using typical Markdown headings. Every heading is automatically recognized as a group, and the commands underneath it as members of that group. Checking the recipes.md file in combination with "how the default commands show up on the app's interface" will help you make better sense of "how it works".
 
 Each recipe and heading must be followed by an empty line in the markdown file.
 
 Apart from predefined commands, you can also use the Custom Input text field to type a custom command describing "what you want to do to the text you've copied to the Clipboard". You can send that command to the LLM (together with the text you've selected) with a click on Send Custom Command, or by pressing CTRL+Enter.
-
 
 On the right of all that wonderful stuff you'll be able to see the text you selected in another editable textarea. You can manipulate it there before unleashing a command on it. Cut it down, streamline it, and edit it like a pro, while wondering "why the heck am I doing what I should have the LLM do for me in the first place? Is there any meaning in all of this? Help!".
 
@@ -37,7 +36,7 @@ The results of CoDude's hard work (...as a glorified intermediary between you an
 
 However, if you don't like all those pop up windows (that are also somewhat buggy in the current version), you can choose to have the LLM responses integrated as a third column on CoDude's main window, from the app's Configuration.
 
-Which brings us to...
+Note that you can also switch the Custom Input to Chat Mode, if you want to continue chatting with the LLM about any previous interraction, or talk about the weather. This will auto-enable Append Mode in the LLM Results field, and have that field work like a typical chat between you and the LLM, where each new message is a progression of everything that came before. 
 
 ## Configuration
 
@@ -71,4 +70,5 @@ And now, enjoy your seamless interractions with your LLMs with a single keypress
 5. Click on the **CoDude** menu, and paste the URL you copied in the **LLM URL** field.
 6. **Save** the changes and minimize CoDude. Done!
 7. Select a string of text in **any** app. Copy it to the clipboard and hit CoDude's shortcut (by default **CTRL** + **Alt** + **C**).
-8. Enjoy!
+8. Choose the recipe you want to "unleash" on the text.
+9. Enjoy!
