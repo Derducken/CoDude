@@ -684,6 +684,8 @@ class CoDudeApp(QMainWindow):
         group_button.setStyleSheet("text-align: left; font-weight: bold;") 
         is_expanded = self._group_states.get(title, True); group_button.setChecked(is_expanded)
         group_button.setText(f"{title} {'▼' if is_expanded else '▶'}"); group_button.setFixedHeight(22)
+        group_button.setContextMenuPolicy(Qt.CustomContextMenu)
+        group_button.customContextMenuRequested.connect(partial(self.show_group_context_menu, title))
         group_widget_container = QWidget(); sp = QSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Fixed) 
         group_widget_container.setSizePolicy(sp)
         group_items_layout = QVBoxLayout(group_widget_container) 
@@ -740,6 +742,78 @@ class CoDudeApp(QMainWindow):
         edit_action = menu.addAction("✏️ Edit Recipe..."); edit_action.triggered.connect(partial(self.edit_recipe_from_context_menu, recipe_id))
         delete_action = menu.addAction("🗑️ Delete Recipe"); delete_action.triggered.connect(partial(self.delete_recipe_from_context_menu, recipe_id))
         menu.exec_(recipe_button.mapToGlobal(point))
+
+    def show_group_context_menu(self, group_title, point):
+        menu = QMenu(self)
+        edit_action = menu.addAction("✏️ Edit Group Title...")
+        edit_action.triggered.connect(partial(self.edit_group_title, group_title))
+        menu.addSeparator()
+        new_group_action = menu.addAction("➕ New Group Below")
+        new_group_action.triggered.connect(partial(self.create_new_group, group_title))
+        new_command_action = menu.addAction("➕ New Command in Group")
+        new_command_action.triggered.connect(partial(self.create_new_command_in_group, group_title))
+        menu.addSeparator()
+        delete_action = menu.addAction("🗑️ Delete Group")
+        delete_action.triggered.connect(partial(self.delete_group, group_title))
+        menu.exec_(self.sender().mapToGlobal(point))
+
+    def show_recipes_area_context_menu(self, point):
+        menu = QMenu(self)
+        
+        # Get the item under cursor if any
+        clicked_item = None
+        for i in range(self.recipe_buttons_layout.count()):
+            item = self.recipe_buttons_layout.itemAt(i)
+            if item and item.widget() and item.widget().underMouse():
+                clicked_item = item.widget()
+                break
+                
+        # Determine context
+        is_on_group = clicked_item and clicked_item.objectName() == "groupButton"
+        is_on_recipe = clicked_item and not is_on_group
+        is_empty_space = not clicked_item
+        
+        # Add appropriate menu items
+        if is_on_group:
+            group_title = clicked_item.text().split(' ')[0]
+            edit_action = menu.addAction(f"✏️ Edit '{group_title}'")
+            edit_action.triggered.connect(partial(self.edit_group_title, group_title))
+            
+            new_group_action = menu.addAction("➕ New Group Below")
+            new_group_action.triggered.connect(partial(self.create_new_group, group_title))
+            
+            new_command_action = menu.addAction("➕ New Command in Group")
+            new_command_action.triggered.connect(partial(self.create_new_command_in_group, group_title))
+            
+            menu.addSeparator()
+            
+            delete_action = menu.addAction(f"🗑️ Delete '{group_title}'")
+            delete_action.triggered.connect(partial(self.delete_group, group_title))
+            
+        elif is_on_recipe:
+            # Find which group this recipe belongs to
+            recipe_name = clicked_item.text().replace("[★]", "").strip()
+            group_title = None
+            for item in self._all_recipes_data:
+                if item['type'] == 'recipe' and item['name'] == recipe_name:
+                    group_title = item['group_title']
+                    break
+            
+            if group_title:
+                new_group_action = menu.addAction("➕ New Group Below")
+                new_group_action.triggered.connect(partial(self.create_new_group, group_title))
+                
+                new_command_action = menu.addAction("➕ New Command Here")
+                new_command_action.triggered.connect(partial(self.create_new_command_at_position, group_title, recipe_name))
+                
+        else:  # Empty space
+            new_group_action = menu.addAction("➕ New Group")
+            new_group_action.triggered.connect(partial(self.create_new_group, None))
+            
+            new_command_action = menu.addAction("➕ New Command")
+            new_command_action.triggered.connect(partial(self.create_new_command_in_group, "Basic Recipes"))
+            
+        menu.exec_(self.mapToGlobal(point))
 
     def toggle_favorite_status(self, recipe_id):
         if recipe_id in self.favorite_recipes: self.favorite_recipes.remove(recipe_id)
@@ -939,6 +1013,241 @@ class CoDudeApp(QMainWindow):
             if active_app_window is None or (active_app_window != self and not is_child_dialog and active_app_window not in self.result_windows):
                 logging.debug("Main window focus possibly lost. Saving active memory."); self.save_memory_content_change(self.active_memory_index, self.results_textedit.toHtml())
         super().focusOutEvent(event)
+
+    def edit_group_title(self, current_title):
+        new_title, ok = QInputDialog.getText(self, "Edit Group Title", "New title:", text=current_title)
+        if ok and new_title and new_title != current_title:
+            if self._update_group_title_in_file(current_title, new_title):
+                self.load_recipes_and_populate_list()
+            else:
+                QMessageBox.critical(self, "Error", "Failed to update group title in file.")
+
+    def _update_group_title_in_file(self, old_title, new_title):
+        if not self.recipes_file or not os.path.exists(self.recipes_file): return False
+        self._backup_recipes_file("before_group_edit")
+        try:
+            with open(self.recipes_file, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            updated_lines = []
+            for line in lines:
+                stripped = line.strip()
+                if stripped.startswith('#') and stripped[1:].strip() == old_title:
+                    updated_lines.append(f"# {new_title}\n")
+                else:
+                    updated_lines.append(line)
+            with open(self.recipes_file, 'w', encoding='utf-8') as f:
+                f.writelines(updated_lines)
+            return True
+        except Exception as e:
+            logging.error(f"Error updating group title: {e}")
+            return False
+
+    def create_new_group(self, current_group_title):
+        new_title, ok = QInputDialog.getText(self, "New Group", "Enter new group name:")
+        if not ok or not new_title.strip():
+            return
+            
+        if not self.recipes_file:
+            reply = QMessageBox.question(self, "No Recipes File", 
+                "No recipes file exists. Create new one with this group?",
+                QMessageBox.Yes | QMessageBox.No)
+            if reply == QMessageBox.Yes:
+                self.recipes_file = os.path.join(BASE_PATH, "recipes.md")
+                with open(self.recipes_file, 'w', encoding='utf-8') as f:
+                    f.write(f"# {new_title}\n")
+                self.load_recipes_and_populate_list()
+                return
+            else:
+                return
+
+        self._backup_recipes_file("before_new_group")
+        try:
+            with open(self.recipes_file, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            
+            # Find insertion point after current group
+            insert_at = len(lines)
+            found_current = False
+            for i, line in enumerate(lines):
+                stripped = line.strip()
+                if stripped.startswith('#') and stripped[1:].strip() == current_group_title:
+                    found_current = True
+                elif found_current and stripped.startswith('#'):
+                    insert_at = i
+                    break
+            
+            # Insert new group
+            lines.insert(insert_at, f"# {new_title}\n\n")
+            
+            with open(self.recipes_file, 'w', encoding='utf-8') as f:
+                f.writelines(lines)
+                
+            self.load_recipes_and_populate_list()
+            return True
+            
+        except Exception as e:
+            logging.error(f"Error creating new group: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to create new group: {e}")
+            return False
+
+    def create_new_command_in_group(self, group_title):
+        return self.create_new_command_at_position(group_title, None)
+
+    def create_new_command_at_position(self, group_title, after_recipe_name=None):
+        dialog = EditRecipeDialog("New Command", "", self)
+        if dialog.exec_() == QDialog.Accepted:
+            name, prompt = dialog.get_data()
+            if not name or not prompt:
+                QMessageBox.warning(self, "Input Error", "Command name and prompt cannot be empty.")
+                return False
+                
+            if not self.recipes_file:
+                reply = QMessageBox.question(self, "No Recipes File", 
+                    "No recipes file exists. Create new one with this command?",
+                    QMessageBox.Yes | QMessageBox.No)
+                if reply == QMessageBox.Yes:
+                    self.recipes_file = os.path.join(BASE_PATH, "recipes.md")
+                    with open(self.recipes_file, 'w', encoding='utf-8') as f:
+                        f.write(f"# {group_title}\n**{name}**: {prompt}\n")
+                    self.load_recipes_and_populate_list()
+                    return True
+                else:
+                    return False
+
+            self._backup_recipes_file("before_new_command")
+            try:
+                with open(self.recipes_file, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                
+                # Find insertion point
+                insert_at = len(lines)
+                in_target_group = False
+                found_after_recipe = after_recipe_name is None
+                
+                for i, line in enumerate(lines):
+                    stripped = line.strip()
+                    if stripped.startswith('#') and stripped[1:].strip() == group_title:
+                        in_target_group = True
+                    elif in_target_group and stripped.startswith('#'):
+                        insert_at = i
+                        break
+                    elif in_target_group and stripped.startswith('**') and ':' in stripped:
+                        if not found_after_recipe and after_recipe_name:
+                            current_name = stripped.split(':', 1)[0].strip().strip('**').strip()
+                            if current_name == after_recipe_name:
+                                found_after_recipe = True
+                                insert_at = i + 1  # Insert after this recipe
+                        elif found_after_recipe:
+                            insert_at = i  # Insert before next recipe
+                            break
+                        else:
+                            insert_at = i + 1  # Default: insert after last recipe
+                
+                # Insert new command
+                lines.insert(insert_at, f"**{name}**: {prompt}\n")
+                
+                with open(self.recipes_file, 'w', encoding='utf-8') as f:
+                    f.writelines(lines)
+                    
+                self.load_recipes_and_populate_list()
+                return True
+                
+            except Exception as e:
+                logging.error(f"Error creating new command: {e}")
+                QMessageBox.critical(self, "Error", f"Failed to create new command: {e}")
+                return False
+
+    def delete_group(self, group_title):
+        # Get confirmation with warning about merging
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Confirm Group Deletion")
+        msg_box.setText(f"Delete group '{group_title}'?")
+        msg_box.setInformativeText("All recipes in this group will be merged into the next group (or Basic Recipes if this is the last group).")
+        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg_box.setDefaultButton(QMessageBox.No)
+        
+        # Add checkbox for keeping group but moving recipes
+        merge_only_checkbox = QCheckBox("Keep empty group (only move recipes)")
+        msg_box.setCheckBox(merge_only_checkbox)
+        
+        if msg_box.exec_() != QMessageBox.Yes:
+            return False
+
+        if not self.recipes_file or not os.path.exists(self.recipes_file):
+            QMessageBox.critical(self, "Error", "Recipes file not found.")
+            return False
+
+        self._backup_recipes_file("before_group_delete")
+        try:
+            with open(self.recipes_file, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+
+            # Find group and its recipes
+            group_start = -1
+            group_end = len(lines)
+            next_group_start = len(lines)
+            in_target_group = False
+            recipes_in_group = []
+
+            for i, line in enumerate(lines):
+                stripped = line.strip()
+                if stripped.startswith('#'):
+                    if stripped[1:].strip() == group_title:
+                        group_start = i
+                        in_target_group = True
+                    elif in_target_group:
+                        next_group_start = i
+                        break
+                elif in_target_group and stripped.startswith('**') and ':' in stripped:
+                    recipes_in_group.append(line)
+
+            if group_start == -1:
+                QMessageBox.critical(self, "Error", f"Group '{group_title}' not found.")
+                return False
+
+            # Remove group header unless checkbox is checked
+            updated_lines = []
+            for i, line in enumerate(lines):
+                if i == group_start and not merge_only_checkbox.isChecked():
+                    continue  # Skip the group header
+                elif i > group_start and i < next_group_start and line.strip() and not line.strip().startswith('**'):
+                    continue  # Skip empty lines between header and recipes
+                elif i == next_group_start and recipes_in_group:
+                    # Insert recipes before next group
+                    updated_lines.extend(recipes_in_group)
+                    updated_lines.append('\n')  # Add separator
+                    updated_lines.append(line)
+                else:
+                    updated_lines.append(line)
+
+            # If no next group, append to Basic Recipes group
+            if next_group_start == len(lines) and recipes_in_group:
+                # Find Basic Recipes group
+                basic_recipes_pos = -1
+                for i, line in enumerate(lines):
+                    if line.strip().startswith('#') and line.strip()[1:].strip() == "Basic Recipes":
+                        basic_recipes_pos = i
+                        break
+                
+                if basic_recipes_pos != -1:
+                    # Insert after Basic Recipes header
+                    updated_lines.insert(basic_recipes_pos + 1, '\n'.join(recipes_in_group) + '\n')
+                else:
+                    # Just append to end
+                    updated_lines.extend(recipes_in_group)
+
+            with open(self.recipes_file, 'w', encoding='utf-8') as f:
+                f.writelines(updated_lines)
+
+            self.load_recipes_and_populate_list()
+            QMessageBox.information(self, "Success", 
+                f"Group '{group_title}' {'emptied' if merge_only_checkbox.isChecked() else 'deleted'}. Recipes merged successfully.")
+            return True
+
+        except Exception as e:
+            logging.error(f"Error deleting group: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to delete group: {e}")
+            return False
 
     def save_memory_content_change(self, memory_idx_to_save, new_html_content):
         if not (0 <= memory_idx_to_save < len(self._memory)): logging.warning(f"Invalid memory index for saving: {memory_idx_to_save}"); return
