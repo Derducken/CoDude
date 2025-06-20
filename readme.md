@@ -63,12 +63,13 @@ Pressing the hotkey again when its interface is visible will hide it again (I pe
 And now, enjoy your seamless interractions with your LLMs with a single keypress!
 
 ## Installation & Use
-1. Install [LM Studio](https://lmstudio.ai/) (or any other solution that exposes an LLM through a single OpenAI-compatible URL).
-2. Run LM Studio, visit its **Developer** page (green terminal icon) and **Select a model to load**. If you haven't downloaded any models, first pay a visit to the **Discover** page. Models that work nicely for text manipulation are... Well, anything over 3B like Mistral, Llama, Gemma, DeepSeek R1, and Qwen have worked for me.
-3. Copy the URL from "**Reachable at**" you'll see at the top right of LM Studio's developer page.
-4. Run CoDude, and press its default hotkey (**CTRL** + **Alt** + **C**) to see its window.
-5. Click on the **CoDude** menu, and paste the URL you copied in the **LLM URL** field.
-6. **Save** the changes and minimize CoDude. Done!
-7. Select a string of text in **any** app. Copy it to the clipboard and hit CoDude's shortcut (by default **CTRL** + **Alt** + **C**).
-8. Choose the recipe you want to "unleash" on the text.
-9. Enjoy!
+1. Download the **recipes.md** you can find above, as well as the latest **CoDude.exe** from the **Releases** page (on the right). Save them in the same folder.
+2. Install [LM Studio](https://lmstudio.ai/) (or any other solution that exposes an LLM through a single OpenAI-compatible URL).
+3. Run LM Studio, visit its **Developer** page (green terminal icon) and **Select a model to load**. If you haven't downloaded any models, first pay a visit to the **Discover** page. Models that work nicely for text manipulation are... Well, anything over 3B like Mistral, Llama, Gemma, DeepSeek R1, Phi, and Qwen have worked for me.
+4. Copy the URL from "**Reachable at**" you'll see at the top right of LM Studio's developer page.
+5. Run CoDude, and press its default hotkey (**CTRL** + **Alt** + **C**) to see its window.
+6. Click on the **CoDude** menu, and paste the URL you copied in the **LLM URL** field.
+7. **Save** the changes and minimize CoDude. Done!
+8. Select a string of text in **any** app. Copy it to the clipboard and hit CoDude's shortcut (by default **CTRL** + **Alt** + **C**).
+9. Choose the recipe you want to "unleash" on the text.
+10. Enjoy!
