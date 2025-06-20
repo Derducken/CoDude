@@ -1,8 +1,10 @@
 # Basic Recipes
 
+**Explain to a 6-month old**: Explain the following text as if I am 6 months old. Make sure to structure your text for maximum readability using Obsidian-friendly markdown, like bolding important terms or key points (by enclosing them in double asterisks), using paragraphs, highlights (by enclosing the text-to-be-highlighted with double-equal signs, like "=="), and up to five levels of headings (by beginning the heading text with "#" followed by a space for H1 headings, "##" followed by a space for H2 headings, and so on). The text is:
+
 **Explain to a 6-year old**: Explain the following text as if I am 5 years old. Make sure to structure your text for maximum readability using Obsidian-friendly markdown, like bolding important terms or key points (by enclosing them in double asterisks), using paragraphs, highlights (by enclosing the text-to-be-highlighted with double-equal signs, like "=="), and up to five levels of headings (by beginning the heading text with "#" followed by a space for H1 headings, "##" followed by a space for H2 headings, and so on). The text is:
 
-**Explain to a 12-year old**: Explain the following text as if I am 10 years old. Make sure to structure your reply for maximum readability using Obsidian-friendly markdown, like bolding important terms or key points (by enclosing them in double asterisks), using paragraphs, highlights (by enclosing the text-to-be-highlighted with double-equal signs, like "=="), and up to five levels of headings (by beginning the heading text with "#" followed by a space for H1 headings, "##" followed by a space for H2 headings, and so on). The text is:
+**Explain to a 12-year old**: Explain the following text as if I am 12 years old. Make sure to structure your reply for maximum readability using Obsidian-friendly markdown, like bolding important terms or key points (by enclosing them in double asterisks), using paragraphs, highlights (by enclosing the text-to-be-highlighted with double-equal signs, like "=="), and up to five levels of headings (by beginning the heading text with "#" followed by a space for H1 headings, "##" followed by a space for H2 headings, and so on). The text is:
 
 **Explain to a 95-year old**: Explain the following text as if I am 95 years old and you're my sarcastic nurse. Make sure to structure your reply for maximum readability using Obsidian-friendly markdown, like bolding important terms or key points (by enclosing them in double asterisks), using paragraphs, highlights (by enclosing the text-to-be-highlighted with double-equal signs, like "=="), and up to five levels of headings (by beginning the heading text with "#" followed by a space for H1 headings, "##" followed by a space for H2 headings, and so on). The text is:
 
@@ -18,11 +20,11 @@
 
 **🗜️ Summarize**: Summarize the following text. Make sure to structure your reply for maximum readability using markdown. The text is:
 
-**🗜️ Summarize Plus**: Summarize the following text in one or two concise paragraphs:
+**🗜️ Summarize in 2 paragraphs**: Summarize the following text in one or two concise paragraphs:
 
-**🗜️ Summarize Hyper**: Summarize the following text in one or two concise sentences:
+**🗜️ Summarize in 2 sentences**: Summarize the following text in one or two concise sentences:
 
-**🗜️ Summarize Ultra**: Summarize the following text in five words or less:
+**🗜️ Summarize in 5 words**: Summarize the following text in five words or less:
 
 # Text Editing & Enhancement
 
@@ -116,7 +118,9 @@
 
 # Engagement & Tone
 
-**💥 Make It Viral**: Rewrite this for maximum engagement and shareability:
+**💥 Make It Viral-LinkedIn**: Rewrite this for maximum engagement and shareability on LinkedIn:
+
+**💥 Make It Viral-Reddit**: Rewrite this for maximum engagement and shareability on Reddit:
 
 **😄 Add Humor**: Rewrite with a light, humorous tone:
 
