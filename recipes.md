@@ -12,7 +12,7 @@
 
 # Text Understanding & Analysis
 
-**🏷️ Suggest Tags**: Suggest tags for the following text:
+**🏷️ Suggest Tags**: Suggest tags (your reply should start with three backticks like "```", then a single line with all the tags, like "#tag1, #tag2", etc., and finally another line with three backticks) for the following text:
 
 **📝 Make Note**: Make a note for my Personal Knowledge Database about the following text. The note should be concise and to-the-point, not a mere list of bullet points, and contain "the gist" of the actual text. Define a metadata area with two lines with "---". "Between" those lines enter the following metadata : "Tags: \[ tag1, tag22 ]" (replace with tags related to the provided text), "Type: note", "Status:" (leave this one empty), "Time: 01:12 2025-04-27" (but replace with the current time and date using the same format). Place each of those metadata entries on separate lines. Make sure you begin and end the metadata section with "---" on separate lines, over and under the metadata. Then, add an empty line. Then, under that empty line, enter the note's name/primary heading on a line like "# Note Title" (extrapolate an appropriate title from the text if one isn't available). Then, enter another blank line. Finally, under that empty line, enter the actual text of your note. Make sure to structure your text for maximum readability using Obsidian-friendly markdown, like bolding important terms or key points (by enclosing them in double asterisks), using paragraphs, highlights (by enclosing the text-to-be-highlighted with double-equal signs, like "=="), and up to five levels of headings (by beginning the heading text with "#" followed by a space for H1 headings, "##" followed by a space for H2 headings, and so on). The text is:
 
@@ -25,6 +25,8 @@
 **🗜️ Summarize in 2 sentences**: Summarize the following text in one or two concise sentences:
 
 **🗜️ Summarize in 5 words**: Summarize the following text in five words or less:
+
+**🗜️ Summarize+**: Summarize the following text. Make sure to structure your reply for maximum readability using markdown. IMPORTANT INSTRUCTIONS: You MUST start with a single sentence describing the gist of the text, like "The text is about a new extension for the Firefox browser", "The text is an author's rant about how Dark Souls is too hard", "The text offers detailed instructions for removing red eyes from photos using an old version of Photoshop", etc. After that, add a blank newline, followed by one or two paragraphs, each up to three sentences long, summarizing the text in more detail. You MUST add empty newlines between paragraphs and sections, and use markdown elements (like bolding phrases by enclosing them in "**", italicizing them by enclosing them in "__", or adding headings and subheadings for sections using "## Subheading here", "### Sub-subheading here", etc.) to ensure maximum readability. Then, add another empty newline, followed by a bullet list titled "Key Points:", listing from two to a dozen major points from the text. Finally, add a "## Takeaway" section under that list, describing why the text is interesting in one or two short sentences. Note that your summary SHOULDN'T be longer than the original text - be direct and concise. The text is:
 
 # Text Editing & Enhancement
 

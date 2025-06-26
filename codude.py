@@ -714,9 +714,12 @@ class CoDudeApp(QMainWindow):
         query = query.lower(); any_match_found = False
         for i in range(self.recipe_buttons_layout.count()):
             top_item = self.recipe_buttons_layout.itemAt(i); 
-            if not top_item: continue; widget = top_item.widget(); 
+            if not top_item: continue
+            widget = top_item.widget()
             if not widget: continue
-            is_group_container = False; group_button_ref = None; group_title = None
+            is_group_container = False
+            group_button_ref = None
+            group_title = None
             if i > 0:
                 prev_item = self.recipe_buttons_layout.itemAt(i-1)
                 if prev_item and prev_item.widget() and isinstance(prev_item.widget(), QPushButton) and prev_item.widget().objectName() == "groupButton" and isinstance(widget, QWidget) and widget.layout() is not None:
