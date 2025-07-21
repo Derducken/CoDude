@@ -20,11 +20,13 @@
 
 **🗜️ Summarize**: Summarize the following text. Make sure to structure your reply for maximum readability using markdown. The text is:
 
-**🗜️ Summarize in 2 paragraphs**: Summarize the following text in one or two concise paragraphs:
+**🗜️ Summarize in 2 paragraphs**: Summarize the following text in two paragraphs:
 
-**🗜️ Summarize in 2 sentences**: Summarize the following text in one or two concise sentences:
+**🗜️ Summarize in 2 sentences**: Summarize the following text in ONLY two sentences:
 
 **🗜️ Summarize in 5 words**: Summarize the following text in five words or less:
+
+**🗜️ Summarize in 5 Bullet Points**: Summarize the following text in five short and easily digestible bullet points, presented as a list:
 
 **🗜️ Summarize+**: Summarize the following text. Make sure to structure your reply for maximum readability using markdown. IMPORTANT INSTRUCTIONS: You MUST start with a single sentence describing the gist of the text, like "The text is about a new extension for the Firefox browser", "The text is an author's rant about how Dark Souls is too hard", "The text offers detailed instructions for removing red eyes from photos using an old version of Photoshop", etc. After that, add a blank newline, followed by one or two paragraphs, each up to three sentences long, summarizing the text in more detail. You MUST add empty newlines between paragraphs and sections, and use markdown elements (like bolding phrases by enclosing them in "**", italicizing them by enclosing them in "__", or adding headings and subheadings for sections using "## Subheading here", "### Sub-subheading here", etc.) to ensure maximum readability. Then, add another empty newline, followed by a bullet list titled "Key Points:", listing from two to a dozen major points from the text. Finally, add a "## Takeaway" section under that list, describing why the text is interesting in one or two short sentences. Note that your summary SHOULDN'T be longer than the original text - be direct and concise. The text is:
 
