@@ -88,3 +88,5 @@ CoDude's recipes can now use LM Studio's MCP-based tools - for example, to perfo
 9. Change the **LLM Provider** to **LM Studio Native API** (the other options don't support tool use. At least, not currently).
 10. Paste the token you copied from LM Studio into **LM Studio API Token**.
 11. Having tools enabled for every single command can induce delays, since even if a recipe doesn't **really** require the use of tools, the LLM might decide otherwise. To prevent the use of tools for every single recipe, and only enable it for specific recipes, place a checkmark on **Require USETOOLS keyword for tools**. Then, modify the prompt of the recipes where you want to enable tool use, to have them begin with "USETOOLS: ". Check the new "Suggest Links" recipe in recipes.md as an example.
+
+Of course, you should use an LLM that supports tool use for optimal results. I find that options like qwen3-4b-instruct-2507-ud-gguf work great for typical text-based tasks like term research, **and** run acceptably on consumer-friendly and relatively affordable hardware (like an Nvidia RTX 3070 GPU, while fitting entirely in its VRAM for quick LLM responses).
