@@ -73,3 +73,18 @@ And now, enjoy your seamless interractions with your LLMs with a single keypress
 8. Select a string of text in **any** app. Copy it to the clipboard and hit CoDude's shortcut (by default **CTRL** + **Alt** + **C**).
 9. Choose the recipe you want to "unleash" on the text.
 10. Enjoy!
+
+## LM Studio Tool Use
+CoDude's recipes can now use LM Studio's MCP-based tools - for example, to perform web searches. However, enabling the feature requires some extra steps:
+
+1. In LM Studio, move to its **Developer tab** (**CTRL** + **F2**).
+2. Click **Server Settings**.
+3. Enable **Require Authentication** and **Allow calling servers from mcp.json**.
+4. Click **Manage Tokens**.
+5. Click **Create new token**.
+6. Add a name for CoDude, and set **Allow per-request remote MCP servers** and **Allow calling servers from mcp.json** to **Allow**. Then, click **Create token**.
+7. **Copy** the created token.
+8. Return to CoDude, click its main **CoDude** menu, and choose **Settings**.
+9. Change the **LLM Provider** to **LM Studio Native API** (the other options don't support tool use. At least, not currently).
+10. Paste the token you copied from LM Studio into **LM Studio API Token**.
+11. Having tools enabled for every single command can induce delays, since even if a recipe doesn't **really** require the use of tools, the LLM might decide otherwise. To prevent the use of tools for every single recipe, and only enable it for specific recipes, place a checkmark on **Require USETOOLS keyword for tools**. Then, modify the prompt of the recipes where you want to enable tool use, to have them begin with "USETOOLS: ". Check the new "Suggest Links" recipe in recipes.md as an example.

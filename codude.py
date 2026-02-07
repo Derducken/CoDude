@@ -43,6 +43,7 @@ CONFIG_FILE = os.path.join(BASE_PATH, "config.json")
 ABOUT_FILE = os.path.join(BASE_PATH, "Readme.md") 
 LOG_FILE = os.path.join(BASE_PATH, "codude.log")
 BACKUP_DIR = os.path.join(BASE_PATH, "backups")
+APP_VERSION = "0.1.2"
 
 # --- Whitespace normalization function ---
 def normalize_whitespace_for_comparison(s):
@@ -114,20 +115,28 @@ class HotkeySignal(QThread):
 class LLMRequestThread(QThread):
     response_received = pyqtSignal(str)
     error_occurred = pyqtSignal(str)
-    def __init__(self, llm_config, prompt, text, timeout=60):
+    def __init__(self, llm_config, prompt, text, timeout=60, require_usetools=False):
         QThread.__init__(self)
         self.llm_config = llm_config; self.prompt = prompt
         self.text = text; self.timeout = timeout
+        self.require_usetools = require_usetools
     def run(self):
         raw_response = "N/A" 
         try:
             provider = self.llm_config.get("provider", "Local OpenAI-Compatible")
             llm_url = self.llm_config.get("url", "")
             api_key = self.llm_config.get("api_key", "")
-            model_name = self.llm_config.get("model_name", "gpt-3.5-turbo") 
+            model_name = self.llm_config.get("model_name", "gpt-3.5-turbo")
+            mcp_plugin_ids = self.llm_config.get("mcp_plugin_ids", "")
             user_content = f"{self.prompt}\n\nText: {self.text}" if self.text.strip() else self.prompt
-            messages = [{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": user_content}]
-            payload = {"model": model_name, "messages": messages}
+            
+            # Check for and strip USETOOLS: keyword from the beginning of prompt (always strip it)
+            prompt_has_usetools = False
+            if user_content.startswith("USETOOLS:"):
+                user_content = user_content[9:].lstrip()  # Remove "USETOOLS:" and any leading whitespace
+                prompt_has_usetools = True
+                logging.debug("USETOOLS: keyword detected and stripped from prompt")
+            
             headers = {"Content-Type": "application/json"}; request_url = ""
             
             if provider == "Local OpenAI-Compatible":
@@ -136,9 +145,48 @@ class LLMRequestThread(QThread):
                 if not path or path == '/': base_url = llm_url.rstrip('/'); request_url = urljoin(f"{base_url}/", 'v1/chat/completions'); logging.info(f"Appended '/v1/chat/completions'. Using: {request_url}")
                 elif path.endswith('/v1/chat/completions'): request_url = llm_url
                 else: request_url = llm_url; logging.warning(f"Using provided local URL as is: {request_url}. Ensure it's the correct chat completion endpoint.")
+                # Add Authorization header if API token is provided
+                if api_key:
+                    headers["Authorization"] = f"Bearer {api_key}"
+                    logging.debug("Using API token for Local OpenAI-Compatible provider")
+                messages = [{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": user_content}]
+                payload = {"model": model_name, "messages": messages}
             elif provider == "OpenAI API":
                 if not api_key: self.error_occurred.emit("OpenAI API Key not configured."); return
                 request_url = "https://api.openai.com/v1/chat/completions"; headers["Authorization"] = f"Bearer {api_key}"
+                messages = [{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": user_content}]
+                payload = {"model": model_name, "messages": messages}
+            elif provider == "LM Studio Native API":
+                if not llm_url: self.error_occurred.emit("LM Studio URL not configured."); return
+                parsed_url = urlparse(llm_url); base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
+                request_url = urljoin(f"{base_url}/", 'api/v1/chat')
+                headers["Authorization"] = f"Bearer {api_key}" if api_key else ""
+                # LM Studio Native API uses 'input' instead of 'messages'
+                payload = {"model": model_name, "input": user_content}
+                # Add MCP integrations if plugin IDs are specified and conditions are met
+                logging.debug(f"MCP plugin IDs raw value: '{mcp_plugin_ids}'")
+                logging.debug(f"require_usetools flag: {self.require_usetools}, prompt_has_usetools: {prompt_has_usetools}")
+                # Determine if tools should be used:
+                # - If require_usetools is False: always use tools if mcp_plugin_ids is configured (backward compatible)
+                # - If require_usetools is True: only use tools if prompt had USETOOLS: keyword
+                should_use_tools = mcp_plugin_ids and mcp_plugin_ids.strip()
+                if self.require_usetools:
+                    should_use_tools = should_use_tools and prompt_has_usetools
+                
+                if should_use_tools:
+                    # Parse comma-separated plugin IDs and create integrations array
+                    plugin_list = [p.strip() for p in mcp_plugin_ids.split(',') if p.strip()]
+                    logging.debug(f"Parsed plugin list: {plugin_list}")
+                    if plugin_list:
+                        payload["integrations"] = [{"type": "plugin", "id": plugin_id} for plugin_id in plugin_list]
+                        logging.info(f"MCP integrations added for LM Studio Native API: {plugin_list}")
+                    else:
+                        logging.warning("No valid plugin IDs found after parsing")
+                else:
+                    if self.require_usetools and not prompt_has_usetools:
+                        logging.debug("Tools disabled: require_usetools is True but prompt lacks USETOOLS: keyword")
+                    else:
+                        logging.debug("No MCP plugin IDs specified")
             else: self.error_occurred.emit(f"Unsupported LLM provider: {provider}"); return
 
             logging.debug(f"Sending LLM request to {request_url} for provider {provider} with model {model_name}")
@@ -161,16 +209,40 @@ class LLMRequestThread(QThread):
             result = response.json()
             if not result: raise ValueError("Empty success response from LLM")
             if not isinstance(result, dict): raise ValueError(f"Invalid success response format. Expected dict, got {type(result)}")
-            content = None; choices = result.get('choices')
-            if isinstance(choices, list) and choices:
-                first_choice = choices[0]
-                if isinstance(first_choice, dict):
-                    message = first_choice.get('message')
-                    if isinstance(message, dict): content = message.get('content')
-            if content is None: 
-                if 'text' in result and isinstance(result['text'], str): content = result['text']; logging.debug("Extracted content using fallback 'text' field.")
-                elif 'response' in result and isinstance(result['response'], str): content = result['response']; logging.debug("Extracted content using fallback 'response' field.")
-                else: raise ValueError("No valid content found in LLM success response.")
+            
+            # Handle different response formats
+            content = None
+            if provider == "LM Studio Native API":
+                # LM Studio Native API returns content in 'output' array
+                # When tools are used, output contains multiple items (tool calls + final message)
+                output = result.get('output')
+                if isinstance(output, list) and output:
+                    # Find the message with content (usually the last item after tool calls)
+                    for item in reversed(output):
+                        if isinstance(item, dict) and item.get('type') == 'message' and item.get('content'):
+                            content = item.get('content')
+                            break
+                    # Fallback: check first item if no message found
+                    if content is None:
+                        first_output = output[0]
+                        if isinstance(first_output, dict):
+                            content = first_output.get('content')
+                # Fallback to other fields if output format not found
+                if content is None:
+                    content = result.get('content') or result.get('text') or result.get('response')
+            else:
+                # OpenAI-compatible format
+                choices = result.get('choices')
+                if isinstance(choices, list) and choices:
+                    first_choice = choices[0]
+                    if isinstance(first_choice, dict):
+                        message = first_choice.get('message')
+                        if isinstance(message, dict): content = message.get('content')
+                if content is None: 
+                    if 'text' in result and isinstance(result['text'], str): content = result['text']; logging.debug("Extracted content using fallback 'text' field.")
+                    elif 'response' in result and isinstance(result['response'], str): content = result['response']; logging.debug("Extracted content using fallback 'response' field.")
+            
+            if content is None: raise ValueError("No valid content found in LLM success response.")
             if not isinstance(content, str): raise ValueError(f"Invalid content type found: {type(content)}. Expected string.")
             self.response_received.emit(content)
         except requests.exceptions.Timeout: self.error_occurred.emit(f"LLM request timed out after {self.timeout} seconds.")
@@ -269,19 +341,43 @@ class ConfigWindow(QDialog):
             
         def create_label(text): lbl = QLabel(text, self); lbl.setFixedHeight(22); return lbl 
 
-        self.llm_provider_combo = QComboBox(self); self.llm_provider_combo.addItems(["Local OpenAI-Compatible", "OpenAI API"])
+        self.llm_provider_combo = QComboBox(self); self.llm_provider_combo.addItems(["Local OpenAI-Compatible", "OpenAI API", "LM Studio Native API"])
         self.llm_provider_combo.currentTextChanged.connect(self.update_llm_fields_visibility)
         self.layout.addLayout(create_row_layout(create_label("LLM Provider:"), self.llm_provider_combo))
         self.llm_url_label = create_label("LLM URL (Local):") 
         self.llm_url_input = QLineEdit(self); self.llm_url_input.setPlaceholderText("e.g., http://localhost:1234") 
         self.llm_url_row = create_row_layout(self.llm_url_label, self.llm_url_input)
         self.layout.addLayout(self.llm_url_row)
+        self.local_api_token_label = create_label("API Token (Optional):")
+        self.local_api_token_input = QLineEdit(self); self.local_api_token_input.setEchoMode(QLineEdit.Password)
+        self.local_api_token_input.setToolTip("Optional: Only needed if your local LLM server requires authentication")
+        self.local_api_token_row = create_row_layout(self.local_api_token_label, self.local_api_token_input)
+        self.layout.addLayout(self.local_api_token_row)
         self.openai_api_key_label = create_label("OpenAI API Key:")
         self.openai_api_key_input = QLineEdit(self); self.openai_api_key_input.setEchoMode(QLineEdit.Password)
         self.openai_key_row = create_row_layout(self.openai_api_key_label, self.openai_api_key_input)
         self.layout.addLayout(self.openai_key_row)
-        self.model_name_input = QLineEdit(self)
-        self.layout.addLayout(create_row_layout(create_label("LLM Model Name:"), self.model_name_input))
+        self.lmstudio_url_label = create_label("LM Studio URL:")
+        self.lmstudio_url_input = QLineEdit(self); self.lmstudio_url_input.setPlaceholderText("e.g., http://localhost:1234")
+        self.lmstudio_url_row = create_row_layout(self.lmstudio_url_label, self.lmstudio_url_input)
+        self.layout.addLayout(self.lmstudio_url_row)
+        self.lmstudio_api_key_label = create_label("LM Studio API Token:")
+        self.lmstudio_api_key_input = QLineEdit(self); self.lmstudio_api_key_input.setEchoMode(QLineEdit.Password)
+        self.lmstudio_api_key_input.setToolTip("Optional: Only needed if you have enabled API authentication in LM Studio settings")
+        self.lmstudio_api_key_row = create_row_layout(self.lmstudio_api_key_label, self.lmstudio_api_key_input)
+        self.layout.addLayout(self.lmstudio_api_key_row)
+        self.mcp_plugin_ids_label = create_label("MCP Plugin IDs:")
+        self.mcp_plugin_ids_input = QLineEdit(self)
+        self.mcp_plugin_ids_input.setPlaceholderText("e.g., web-search, filesystem")
+        self.mcp_plugin_ids_input.setToolTip("Enter comma-separated MCP server IDs (not individual tool names). Example: web-search, filesystem")
+        self.mcp_plugin_ids_row = create_row_layout(self.mcp_plugin_ids_label, self.mcp_plugin_ids_input)
+        self.layout.addLayout(self.mcp_plugin_ids_row)
+        self.require_usetools_checkbox = QCheckBox("Require USETOOLS keyword for tools", self)
+        self.require_usetools_checkbox.setToolTip("When enabled, tools will only be used for recipes that start with USETOOLS:")
+        self.layout.addWidget(self.require_usetools_checkbox)
+        self.model_name_combo = QComboBox(self); self.model_name_combo.setEditable(True)
+        self.model_name_combo.setToolTip("Select or type a model name. The dropdown shows available models when the provider is accessible.")
+        self.layout.addLayout(create_row_layout(create_label("LLM Model:"), self.model_name_combo))
         self.layout.addSpacerItem(QSpacerItem(20, 10, QSizePolicy.Minimum, QSizePolicy.Fixed))
         self.max_recents_input = QLineEdit(self); self.max_recents_input.setValidator(QIntValidator(0, 100, self))
         self.layout.addLayout(create_row_layout(create_label("Max Recent Recipes:"), self.max_recents_input))
@@ -310,7 +406,7 @@ class ConfigWindow(QDialog):
         browse_memory_button = QPushButton("Browse", self); browse_memory_button.clicked.connect(self.browse_memory_dir)
         self.layout.addLayout(create_row_layout(create_label("Memory Directory:"), self.memory_dir_input, browse_memory_button))
         self.layout.addSpacerItem(QSpacerItem(20, 10, QSizePolicy.Minimum, QSizePolicy.Fixed))
-        self.timeout_input = QLineEdit(self); self.timeout_input.setValidator(QIntValidator(5, 600, self)) 
+        self.timeout_input = QLineEdit(self); self.timeout_input.setValidator(QIntValidator(5, 999999, self))
         self.layout.addLayout(create_row_layout(create_label("LLM Timeout (sec):"), self.timeout_input))
         self.logging_combo = QComboBox(self); self.logging_combo.addItems(['None', 'Minimal', 'Normal', 'Extended', 'Everything'])
         self.layout.addLayout(create_row_layout(create_label("Logging Level:"), self.logging_combo))
@@ -322,12 +418,23 @@ class ConfigWindow(QDialog):
         button_layout_bottom = QHBoxLayout(); save_button = QPushButton("Save", self); save_button.clicked.connect(self.save_config_values)
         button_layout_bottom.addWidget(save_button); cancel_button = QPushButton("Cancel", self); cancel_button.clicked.connect(self.reject)
         button_layout_bottom.addWidget(cancel_button); self.layout.addLayout(button_layout_bottom)
+        # Add version label at the bottom with smaller font
+        version_label = QLabel(f"Version {APP_VERSION}", self)
+        version_label.setAlignment(Qt.AlignCenter)
+        version_font = QFont()
+        version_font.setPointSize(8)  # Smaller font size
+        version_label.setFont(version_font)
+        self.layout.addWidget(version_label)
         self.load_config_values(); self.update_llm_fields_visibility(); self.adjustSize()
         
     def update_llm_fields_visibility(self):
-        provider = self.llm_provider_combo.currentText(); is_local = provider == "Local OpenAI-Compatible"; is_openai_api = provider == "OpenAI API"
-        for w in [self.llm_url_label, self.llm_url_input]: w.setVisible(is_local)
+        provider = self.llm_provider_combo.currentText()
+        is_local = provider == "Local OpenAI-Compatible"
+        is_openai_api = provider == "OpenAI API"
+        is_lmstudio = provider == "LM Studio Native API"
+        for w in [self.llm_url_label, self.llm_url_input, self.local_api_token_label, self.local_api_token_input]: w.setVisible(is_local)
         for w in [self.openai_api_key_label, self.openai_api_key_input]: w.setVisible(is_openai_api)
+        for w in [self.lmstudio_url_label, self.lmstudio_url_input, self.lmstudio_api_key_label, self.lmstudio_api_key_input, self.mcp_plugin_ids_label, self.mcp_plugin_ids_input]: w.setVisible(is_lmstudio)
         self.adjustSize()
         
     def browse_recipes_file(self):
@@ -340,6 +447,80 @@ class ConfigWindow(QDialog):
         d = QFileDialog.getExistingDirectory(self, "Select Memory Directory", options=options)
         if d: self.memory_dir_input.setText(d)
         
+    def fetch_available_models(self):
+        """Fetch available models from the selected provider and populate the dropdown."""
+        try:
+            provider = self.llm_provider_combo.currentText()
+            current_model = self.model_name_combo.currentText()
+            
+            models = []
+            headers = {"Content-Type": "application/json"}
+            
+            if provider == "OpenAI API":
+                api_key = self.openai_api_key_input.text().strip()
+                if not api_key:
+                    logging.debug("No OpenAI API key, skipping model fetch")
+                    return
+                headers["Authorization"] = f"Bearer {api_key}"
+                try:
+                    response = requests.get("https://api.openai.com/v1/models", headers=headers, timeout=5)
+                    if response.status_code == 200:
+                        data = response.json()
+                        models = [m['id'] for m in data.get('data', []) if m.get('id')]
+                        # Filter to only show chat completion models
+                        models = [m for m in models if 'gpt' in m.lower() or 'chat' in m.lower()]
+                except Exception as e:
+                    logging.debug(f"Failed to fetch OpenAI models: {e}")
+                    
+            elif provider == "Local OpenAI-Compatible":
+                url = self.llm_url_input.text().strip()
+                if not url:
+                    return
+                # Try to fetch from /v1/models endpoint
+                parsed_url = urlparse(url)
+                base_url = f"{parsed_url.scheme}://{parsed_url.netloc}" if parsed_url.netloc else url.rstrip('/')
+                try:
+                    response = requests.get(f"{base_url}/v1/models", headers=headers, timeout=5)
+                    if response.status_code == 200:
+                        data = response.json()
+                        models = [m['id'] for m in data.get('data', []) if m.get('id')]
+                except Exception as e:
+                    logging.debug(f"Failed to fetch local models: {e}")
+                    
+            elif provider == "LM Studio Native API":
+                url = self.lmstudio_url_input.text().strip()
+                if not url:
+                    return
+                # LM Studio also supports /v1/models
+                parsed_url = urlparse(url)
+                base_url = f"{parsed_url.scheme}://{parsed_url.netloc}" if parsed_url.netloc else url.rstrip('/')
+                api_key = self.lmstudio_api_key_input.text().strip()
+                if api_key:
+                    headers["Authorization"] = f"Bearer {api_key}"
+                try:
+                    response = requests.get(f"{base_url}/v1/models", headers=headers, timeout=5)
+                    if response.status_code == 200:
+                        data = response.json()
+                        models = [m['id'] for m in data.get('data', []) if m.get('id')]
+                except Exception as e:
+                    logging.debug(f"Failed to fetch LM Studio models: {e}")
+            
+            # Update the combo box with fetched models
+            if models:
+                # Preserve current text
+                self.model_name_combo.clear()
+                # Add models, putting currently loaded one first if it exists
+                if current_model and current_model in models:
+                    models.remove(current_model)
+                    self.model_name_combo.addItem(current_model)
+                self.model_name_combo.addItems(sorted(models))
+                # Restore the current text if it wasn't in the list
+                if current_model and self.model_name_combo.findText(current_model) == -1:
+                    self.model_name_combo.setCurrentText(current_model)
+                logging.debug(f"Fetched {len(models)} models from {provider}")
+        except Exception as e:
+            logging.error(f"Error in fetch_available_models: {e}")
+        
     def load_config_values(self):
         try:
             config = {}; 
@@ -347,8 +528,18 @@ class ConfigWindow(QDialog):
                 with open(CONFIG_FILE, 'r', encoding='utf-8') as f: config = json.load(f)
             self.llm_provider_combo.setCurrentText(config.get("llm_provider", "Local OpenAI-Compatible"))
             self.llm_url_input.setText(config.get("llm_url", "http://127.0.0.1:1234")) # Default Base URL
+            self.local_api_token_input.setText(config.get("local_api_token", ""))
             self.openai_api_key_input.setText(config.get("openai_api_key", ""))
-            self.model_name_input.setText(config.get("llm_model_name", "gpt-3.5-turbo")) # Use LLM model name field
+            self.lmstudio_url_input.setText(config.get("lmstudio_url", "http://127.0.0.1:1234"))
+            self.lmstudio_api_key_input.setText(config.get("lmstudio_api_key", ""))
+            self.mcp_plugin_ids_input.setText(config.get("mcp_plugin_ids", ""))
+            # Load the require_usetools setting
+            self.require_usetools_checkbox.setChecked(config.get("require_usetools_for_tools", False))
+            # Set the model name in the combo box
+            saved_model = config.get("llm_model_name", "gpt-3.5-turbo")
+            self.model_name_combo.setCurrentText(saved_model)
+            # Fetch available models after a short delay to allow UI to initialize
+            QTimer.singleShot(100, self.fetch_available_models)
             self.max_recents_input.setText(str(config.get("max_recents", 5))); self.max_favorites_input.setText(str(config.get("max_favorites", 5)))
             self.recipes_file_input.setText(config.get("recipes_file", os.path.join(BASE_PATH, "recipes.md")))
             hotkey = config.get("hotkey", {"ctrl": True, "alt": True, "main_key": "c"})
@@ -369,9 +560,14 @@ class ConfigWindow(QDialog):
     def save_config_values(self):
         try:
             llm_provider_val = self.llm_provider_combo.currentText(); llm_url_val = self.llm_url_input.text().strip()
+            lmstudio_url_val = self.lmstudio_url_input.text().strip()
             if llm_provider_val == "Local OpenAI-Compatible" and not llm_url_val:
                 reply = QMessageBox.question(self, "LLM URL Not Set", "Use default 'http://127.0.0.1:1234'?", QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
                 if reply == QMessageBox.Yes: llm_url_val = "http://127.0.0.1:1234"
+                elif reply == QMessageBox.Cancel: return
+            if llm_provider_val == "LM Studio Native API" and not lmstudio_url_val:
+                reply = QMessageBox.question(self, "LM Studio URL Not Set", "Use default 'http://127.0.0.1:1234'?", QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
+                if reply == QMessageBox.Yes: lmstudio_url_val = "http://127.0.0.1:1234"
                 elif reply == QMessageBox.Cancel: return
             permanent_memory_checked = self.permanent_memory_checkbox.isChecked(); memory_dir_val = self.memory_dir_input.text().strip()
             if permanent_memory_checked and not memory_dir_val:
@@ -379,9 +575,17 @@ class ConfigWindow(QDialog):
                 reply = QMessageBox.question(self, "Memory Directory", f"Use default '{default_mem_dir}'?", QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
                 if reply == QMessageBox.Yes: memory_dir_val = default_mem_dir; os.makedirs(memory_dir_val, exist_ok=True); self.memory_dir_input.setText(memory_dir_val)
                 elif reply == QMessageBox.Cancel: return
+            mcp_value = self.mcp_plugin_ids_input.text().strip()
+            local_token = self.local_api_token_input.text().strip()
+            logging.debug(f"Saving mcp_plugin_ids from input field: '{mcp_value}'")
+            logging.debug(f"Saving local_api_token: '{local_token}'")
             config_data = {
                 "llm_provider": llm_provider_val, "llm_url": llm_url_val, "openai_api_key": self.openai_api_key_input.text(),
-                "llm_model_name": self.model_name_input.text().strip() or "gpt-3.5-turbo",
+                "local_api_token": local_token,
+                "lmstudio_url": lmstudio_url_val, "lmstudio_api_key": self.lmstudio_api_key_input.text(),
+                "mcp_plugin_ids": mcp_value,
+                "require_usetools_for_tools": self.require_usetools_checkbox.isChecked(),
+                "llm_model_name": self.model_name_combo.currentText().strip() or "gpt-3.5-turbo",
                 "max_recents": int(self.max_recents_input.text() or 5), "max_favorites": int(self.max_favorites_input.text() or 5),
                 "recipes_file": self.recipes_file_input.text().strip(),
                 "hotkey": {"ctrl": self.ctrl_checkbox.isChecked(), "shift": self.shift_checkbox.isChecked(), "alt": self.alt_checkbox.isChecked(), "main_key": self.main_key_input.text().strip().lower() or "c"},
@@ -393,7 +597,10 @@ class ConfigWindow(QDialog):
                 "textarea_font_sizes": getattr(self.main_app_ref, "textarea_font_sizes", {}), "splitter_sizes": getattr(self.main_app_ref, "splitter_sizes", [250,350,300]),
                 "recently_used_recipes": list(getattr(self.main_app_ref, "recently_used_recipes", deque())), "favorite_recipes": getattr(self.main_app_ref, "favorite_recipes", [])
             }
-            with open(CONFIG_FILE, 'w', encoding='utf-8') as f: json.dump(config_data, f, indent=4)
+            with open(CONFIG_FILE, 'w', encoding='utf-8') as f: 
+                json.dump(config_data, f, indent=4)
+                f.flush()
+                os.fsync(f.fileno())
             QMessageBox.information(self, "Config Saved", "Configuration saved successfully."); logging.debug("Config saved successfully"); self.accept()
         except ValueError as ve: logging.error(f"Invalid input: {ve}"); QMessageBox.critical(self, "Input Error", f"Invalid numeric value: {ve}")
         except Exception as e: logging.error(f"Could not save config: {e}"); QMessageBox.critical(self, "Save Error", f"Could not save config: {e}")
@@ -552,18 +759,32 @@ class CoDudeApp(QMainWindow):
 
     def validate_and_load_config(self):
         default_recipes_path = os.path.join(BASE_PATH, "recipes.md"); default_memory_path = os.path.join(BASE_PATH, "memory")
-        default_config = { "llm_provider": "Local OpenAI-Compatible", "llm_url": "http://127.0.0.1:1234", "openai_api_key": "", "llm_model_name": "gpt-3.5-turbo", "recipes_file": default_recipes_path, "hotkey": {"ctrl": True, "shift": False, "alt": True, "main_key": "c"}, "logging_level": "Normal", "logging_output": "Both", "theme": "Light", "group_states": {}, "results_display": "Separate Windows", "font_size": 10, "permanent_memory": False, "memory_dir": default_memory_path, "append_mode": False, "textarea_font_sizes": {}, "splitter_sizes": self.splitter_sizes, "llm_timeout": 60, "close_behavior": "Exit", "max_recents": 5, "max_favorites": 5, "recently_used_recipes": [], "favorite_recipes": [] }
+        default_config = { "llm_provider": "Local OpenAI-Compatible", "llm_url": "http://127.0.0.1:1234", "openai_api_key": "", "lmstudio_url": "http://127.0.0.1:1234", "lmstudio_api_key": "", "use_mcp_tools": False, "llm_model_name": "gpt-3.5-turbo", "recipes_file": default_recipes_path, "hotkey": {"ctrl": True, "shift": False, "alt": True, "main_key": "c"}, "logging_level": "Normal", "logging_output": "Both", "theme": "Light", "group_states": {}, "results_display": "Separate Windows", "font_size": 10, "permanent_memory": False, "memory_dir": default_memory_path, "append_mode": False, "textarea_font_sizes": {}, "splitter_sizes": self.splitter_sizes, "llm_timeout": 60, "close_behavior": "Exit", "max_recents": 5, "max_favorites": 5, "recently_used_recipes": [], "favorite_recipes": [] }
         try:
             logging.debug(f"Validating and loading config from {CONFIG_FILE}"); os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
             config_to_load = default_config.copy()
             if os.path.exists(CONFIG_FILE):
                 with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                     loaded_config = json.load(f); 
-                    for key in config_to_load: 
-                        if key in loaded_config: config_to_load[key] = loaded_config[key]
+                    # Copy all keys from loaded config, including new ones not in default
+                    for key in loaded_config: 
+                        config_to_load[key] = loaded_config[key]
             else: 
                  with open(CONFIG_FILE, 'w', encoding='utf-8') as f: json.dump(default_config, f, indent=4); logging.info(f"Default config file created at {CONFIG_FILE}")
-            self.llm_provider = config_to_load['llm_provider']; self.llm_url = config_to_load['llm_url']; self.openai_api_key = config_to_load['openai_api_key']; self.llm_model_name = config_to_load['llm_model_name']
+            self.llm_provider = config_to_load['llm_provider']; self.llm_url = config_to_load['llm_url']; self.openai_api_key = config_to_load['openai_api_key']
+            self.local_api_token = config_to_load.get('local_api_token', '')
+            self.lmstudio_url = config_to_load.get('lmstudio_url', 'http://127.0.0.1:1234')
+            self.lmstudio_api_key = config_to_load.get('lmstudio_api_key', '')
+            logging.debug(f"Config keys: {list(config_to_load.keys())}")
+            logging.debug(f"mcp_plugin_ids in config: {'mcp_plugin_ids' in config_to_load}")
+            raw_mcp = config_to_load.get('mcp_plugin_ids')
+            logging.debug(f"Raw mcp_plugin_ids value: {repr(raw_mcp)}")
+            self.mcp_plugin_ids = raw_mcp if raw_mcp else ''
+            logging.debug(f"Loaded mcp_plugin_ids from config: '{self.mcp_plugin_ids}'")
+            # Load the require_usetools_for_tools setting (default to False for backward compatibility)
+            self.require_usetools_for_tools = config_to_load.get('require_usetools_for_tools', False)
+            logging.debug(f"Loaded require_usetools_for_tools from config: {self.require_usetools_for_tools}")
+            self.llm_model_name = config_to_load['llm_model_name']
             self.recipes_file = config_to_load['recipes_file']
             if self.recipes_file and not os.path.isabs(self.recipes_file): self.recipes_file = os.path.join(BASE_PATH, self.recipes_file)
             self.hotkey_config = config_to_load['hotkey']; setup_logging(config_to_load['logging_level'], config_to_load['logging_output'])
@@ -919,9 +1140,26 @@ class CoDudeApp(QMainWindow):
     def execute_recipe_command(self, prompt_from_file_or_custom, recipe_name="Recipe", button_ref=None, is_chat_mode=False, text_override=None):
         captured_text = text_override if text_override is not None else self.captured_text_edit.toPlainText()
         if not is_chat_mode and not captured_text.strip(): QMessageBox.information(self, "No Text", "Please capture text for non-chat recipes."); return
-        llm_api_config = { "provider": self.llm_provider, "url": self.llm_url, "api_key": self.openai_api_key, "model_name": self.llm_model_name }
-        if not llm_api_config.get("url") and llm_api_config["provider"] == "Local OpenAI-Compatible": QMessageBox.warning(self, "LLM URL Missing", "LLM URL not configured."); return
-        if not llm_api_config.get("api_key") and llm_api_config["provider"] == "OpenAI API": QMessageBox.warning(self, "API Key Missing", f"{llm_api_config['provider']} API Key not configured."); return
+        
+        # Determine the correct URL and API key based on provider
+        if self.llm_provider == "LM Studio Native API":
+            llm_api_config = { 
+                "provider": self.llm_provider, 
+                "url": self.lmstudio_url, 
+                "api_key": self.lmstudio_api_key, 
+                "model_name": self.llm_model_name,
+                "mcp_plugin_ids": getattr(self, 'mcp_plugin_ids', '')
+            }
+            if not llm_api_config.get("url"): QMessageBox.warning(self, "LM Studio URL Missing", "LM Studio URL not configured."); return
+        else:
+            llm_api_config = { 
+                "provider": self.llm_provider, 
+                "url": self.llm_url, 
+                "api_key": self.local_api_token if self.llm_provider == "Local OpenAI-Compatible" else self.openai_api_key, 
+                "model_name": self.llm_model_name 
+            }
+            if not llm_api_config.get("url") and llm_api_config["provider"] == "Local OpenAI-Compatible": QMessageBox.warning(self, "LLM URL Missing", "LLM URL not configured."); return
+            if not llm_api_config.get("api_key") and llm_api_config["provider"] == "OpenAI API": QMessageBox.warning(self, "API Key Missing", f"{llm_api_config['provider']} API Key not configured."); return
         logging.info(f"Executing: '{prompt_from_file_or_custom[:50]}...' (Chat: {is_chat_mode}) with text: '{captured_text[:50]}...'")
         if button_ref and isinstance(button_ref, QPushButton):
             original_style = button_ref.styleSheet(); highlight_style = "background-color: #90EE90; color: black; text-align: left;"
@@ -933,7 +1171,9 @@ class CoDudeApp(QMainWindow):
             self.recently_used_recipes.appendleft(recipe_id)
             if self.recently_used_recipes.maxlen != self.max_recents: self.recently_used_recipes = deque(list(self.recently_used_recipes), maxlen=self.max_recents if self.max_recents > 0 else None)
             self._save_partial_config({'recently_used_recipes': list(self.recently_used_recipes)})
-        self.llm_thread = LLMRequestThread(llm_api_config, prompt_from_file_or_custom, captured_text, self.llm_timeout)
+        # Get the require_usetools setting from config (default to False for backward compatibility)
+        require_usetools = getattr(self, 'require_usetools_for_tools', False)
+        self.llm_thread = LLMRequestThread(llm_api_config, prompt_from_file_or_custom, captured_text, self.llm_timeout, require_usetools)
         self.llm_thread.response_received.connect(partial(self.handle_llm_response, captured_text=captured_text, prompt=prompt_from_file_or_custom, is_chat_mode=is_chat_mode))
         self.llm_thread.error_occurred.connect(self.handle_llm_error); self.llm_thread.start()
 
