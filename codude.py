@@ -24,27 +24,7 @@ import html # For escaping HTML in chat
 from urllib.parse import urlparse, urljoin # For smarter URL handling
 from llm_client import LLMRequestThread
 from logger import setup_logging
-
-# --- Corrected Base Path Detection ---
-def get_base_path():
-    """Get the base path for file operations, works for both dev and PyInstaller bundles."""
-    if getattr(sys, 'frozen', False):
-        # If the application is run as a bundle (compiled), the base path
-        # is the directory containing the executable file.
-        base_path = os.path.dirname(sys.executable)
-    else:
-        # If running in a normal Python environment (e.g., from source), 
-        # the base path is the script's directory.
-        base_path = os.path.dirname(os.path.abspath(__file__))
-    # Ensure the path uses correct directory separators for the OS
-    base_path = os.path.normpath(base_path)
-    return base_path
-
-BASE_PATH = get_base_path()
-CONFIG_FILE = os.path.join(BASE_PATH, "config.json")
-ABOUT_FILE = os.path.join(BASE_PATH, "Readme.md") 
-BACKUP_DIR = os.path.join(BASE_PATH, "backups")
-APP_VERSION = "0.1.3"
+from config import ConfigWindow, get_base_path, BASE_PATH, CONFIG_FILE, ABOUT_FILE, BACKUP_DIR, APP_VERSION
 
 # --- Whitespace normalization function ---
 def normalize_whitespace_for_comparison(s):
@@ -152,287 +132,6 @@ class EditRecipeDialog(QDialog):
         button_layout.addWidget(self.cancel_button); layout.addLayout(button_layout)
     def get_data(self): return self.name_input.text().strip(), self.prompt_input.toPlainText().strip()
 
-# Configuration Window
-class ConfigWindow(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent); self.setWindowTitle("CoDude Configuration"); self.setMinimumWidth(450)
-        self.main_app_ref = parent; self.layout = QVBoxLayout(self)
-        self.layout.setSpacing(5); self.layout.setContentsMargins(10,10,10,10)
-        
-        def create_row_layout(*widgets_to_add):
-            row = QHBoxLayout(); row.setSpacing(5)
-            for w in widgets_to_add:
-                if isinstance(w, (QPushButton, QLineEdit, QComboBox, QCheckBox, QLabel)): w.setFixedHeight(22) 
-                if isinstance(w, QSpacerItem): row.addSpacerItem(w) 
-                else: row.addWidget(w) 
-            return row
-            
-        def create_label(text): lbl = QLabel(text, self); lbl.setFixedHeight(22); return lbl 
-
-        self.llm_provider_combo = QComboBox(self); self.llm_provider_combo.addItems(["Local OpenAI-Compatible", "OpenAI API", "LM Studio Native API"])
-        self.llm_provider_combo.currentTextChanged.connect(self.update_llm_fields_visibility)
-        self.layout.addLayout(create_row_layout(create_label("LLM Provider:"), self.llm_provider_combo))
-        self.llm_url_label = create_label("LLM URL (Local):") 
-        self.llm_url_input = QLineEdit(self); self.llm_url_input.setPlaceholderText("e.g., http://localhost:1234") 
-        self.llm_url_row = create_row_layout(self.llm_url_label, self.llm_url_input)
-        self.layout.addLayout(self.llm_url_row)
-        self.local_api_token_label = create_label("API Token (Optional):")
-        self.local_api_token_input = QLineEdit(self); self.local_api_token_input.setEchoMode(QLineEdit.Password)
-        self.local_api_token_input.setToolTip("Optional: Only needed if your local LLM server requires authentication")
-        self.local_api_token_row = create_row_layout(self.local_api_token_label, self.local_api_token_input)
-        self.layout.addLayout(self.local_api_token_row)
-        self.openai_api_key_label = create_label("OpenAI API Key:")
-        self.openai_api_key_input = QLineEdit(self); self.openai_api_key_input.setEchoMode(QLineEdit.Password)
-        self.openai_key_row = create_row_layout(self.openai_api_key_label, self.openai_api_key_input)
-        self.layout.addLayout(self.openai_key_row)
-        self.lmstudio_url_label = create_label("LM Studio URL:")
-        self.lmstudio_url_input = QLineEdit(self); self.lmstudio_url_input.setPlaceholderText("e.g., http://localhost:1234")
-        self.lmstudio_url_row = create_row_layout(self.lmstudio_url_label, self.lmstudio_url_input)
-        self.layout.addLayout(self.lmstudio_url_row)
-        self.lmstudio_api_key_label = create_label("LM Studio API Token:")
-        self.lmstudio_api_key_input = QLineEdit(self); self.lmstudio_api_key_input.setEchoMode(QLineEdit.Password)
-        self.lmstudio_api_key_input.setToolTip("Optional: Only needed if you have enabled API authentication in LM Studio settings")
-        self.lmstudio_api_key_row = create_row_layout(self.lmstudio_api_key_label, self.lmstudio_api_key_input)
-        self.layout.addLayout(self.lmstudio_api_key_row)
-        self.mcp_plugin_ids_label = create_label("MCP Plugin IDs:")
-        self.mcp_plugin_ids_input = QLineEdit(self)
-        self.mcp_plugin_ids_input.setPlaceholderText("e.g., web-search, filesystem")
-        self.mcp_plugin_ids_input.setToolTip("Enter comma-separated MCP server IDs (not individual tool names). Example: web-search, filesystem")
-        self.mcp_plugin_ids_row = create_row_layout(self.mcp_plugin_ids_label, self.mcp_plugin_ids_input)
-        self.layout.addLayout(self.mcp_plugin_ids_row)
-        self.require_usetools_checkbox = QCheckBox("Require USETOOLS keyword for tools", self)
-        self.require_usetools_checkbox.setToolTip("When enabled, tools will only be used for recipes that start with USETOOLS:")
-        self.layout.addWidget(self.require_usetools_checkbox)
-        self.model_name_combo = QComboBox(self); self.model_name_combo.setEditable(True)
-        self.model_name_combo.setToolTip("Select or type a model name. The dropdown shows available models when the provider is accessible.")
-        self.layout.addLayout(create_row_layout(create_label("LLM Model:"), self.model_name_combo))
-        self.layout.addSpacerItem(QSpacerItem(20, 10, QSizePolicy.Minimum, QSizePolicy.Fixed))
-        self.max_recents_input = QLineEdit(self); self.max_recents_input.setValidator(QIntValidator(0, 100, self))
-        self.layout.addLayout(create_row_layout(create_label("Max Recent Recipes:"), self.max_recents_input))
-        self.max_favorites_input = QLineEdit(self); self.max_favorites_input.setValidator(QIntValidator(0, 100, self))
-        self.layout.addLayout(create_row_layout(create_label("Max Favorite Recipes:"), self.max_favorites_input))
-        self.layout.addSpacerItem(QSpacerItem(20, 10, QSizePolicy.Minimum, QSizePolicy.Fixed))
-        self.layout.addWidget(create_label("Hotkey Configuration:")) 
-        self.ctrl_checkbox = QCheckBox("Ctrl", self); self.shift_checkbox = QCheckBox("Shift", self); self.alt_checkbox = QCheckBox("Alt", self)
-        modifier_layout = create_row_layout(self.ctrl_checkbox, self.shift_checkbox, self.alt_checkbox, QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
-        self.layout.addLayout(modifier_layout)
-        self.main_key_input = QLineEdit(self); self.main_key_input.setMaxLength(1)
-        self.layout.addLayout(create_row_layout(create_label("Main Hotkey Key:"), self.main_key_input))
-        self.layout.addSpacerItem(QSpacerItem(20, 10, QSizePolicy.Minimum, QSizePolicy.Fixed))
-        self.theme_combo = QComboBox(self); self.theme_combo.addItems(['Light', 'Dark'])
-        self.layout.addLayout(create_row_layout(create_label("Theme:"), self.theme_combo))
-        self.results_display_combo = QComboBox(self); self.results_display_combo.addItems(['Separate Windows', 'In-App Textarea'])
-        self.layout.addLayout(create_row_layout(create_label("Results Display:"), self.results_display_combo))
-        self.font_size_slider = QSlider(Qt.Horizontal, self); self.font_size_slider.setMinimum(8); self.font_size_slider.setMaximum(18); self.font_size_slider.setTickInterval(1); self.font_size_slider.setValue(10)
-        self.layout.addLayout(create_row_layout(create_label("Global Font Size:"), self.font_size_slider))
-        self.layout.addSpacerItem(QSpacerItem(20, 10, QSizePolicy.Minimum, QSizePolicy.Fixed))
-        self.recipes_file_input = QLineEdit(self); self.recipes_file_input.setReadOnly(True)
-        browse_recipes_button = QPushButton("Browse", self); browse_recipes_button.clicked.connect(self.browse_recipes_file)
-        self.layout.addLayout(create_row_layout(create_label("Recipes File:"), self.recipes_file_input, browse_recipes_button))
-        self.permanent_memory_checkbox = QCheckBox("Permanent Memory", self); self.layout.addWidget(self.permanent_memory_checkbox)
-        self.memory_dir_input = QLineEdit(self); self.memory_dir_input.setReadOnly(True)
-        browse_memory_button = QPushButton("Browse", self); browse_memory_button.clicked.connect(self.browse_memory_dir)
-        self.layout.addLayout(create_row_layout(create_label("Memory Directory:"), self.memory_dir_input, browse_memory_button))
-        self.layout.addSpacerItem(QSpacerItem(20, 10, QSizePolicy.Minimum, QSizePolicy.Fixed))
-        self.timeout_input = QLineEdit(self); self.timeout_input.setValidator(QIntValidator(5, 999999, self))
-        self.layout.addLayout(create_row_layout(create_label("LLM Timeout (sec):"), self.timeout_input))
-        self.logging_combo = QComboBox(self); self.logging_combo.addItems(['None', 'Minimal', 'Normal', 'Extended', 'Everything'])
-        self.layout.addLayout(create_row_layout(create_label("Logging Level:"), self.logging_combo))
-        self.logging_output_combo = QComboBox(self); self.logging_output_combo.addItems(['Terminal', 'File', 'Both'])
-        self.layout.addLayout(create_row_layout(create_label("Logging Output:"), self.logging_output_combo))
-        self.close_behavior_combo = QComboBox(self); self.close_behavior_combo.addItems(['Exit', 'Minimize to Tray'])
-        self.layout.addLayout(create_row_layout(create_label("Close Behavior:"), self.close_behavior_combo))
-        self.layout.addSpacerItem(QSpacerItem(20, 10, QSizePolicy.Minimum, QSizePolicy.Expanding)) 
-        button_layout_bottom = QHBoxLayout(); save_button = QPushButton("Save", self); save_button.clicked.connect(self.save_config_values)
-        button_layout_bottom.addWidget(save_button); cancel_button = QPushButton("Cancel", self); cancel_button.clicked.connect(self.reject)
-        button_layout_bottom.addWidget(cancel_button); self.layout.addLayout(button_layout_bottom)
-        # Add version label at the bottom with smaller font
-        version_label = QLabel(f"Version {APP_VERSION}", self)
-        version_label.setAlignment(Qt.AlignCenter)
-        version_font = QFont()
-        version_font.setPointSize(8)  # Smaller font size
-        version_label.setFont(version_font)
-        self.layout.addWidget(version_label)
-        self.load_config_values(); self.update_llm_fields_visibility(); self.adjustSize()
-        
-    def update_llm_fields_visibility(self):
-        provider = self.llm_provider_combo.currentText()
-        is_local = provider == "Local OpenAI-Compatible"
-        is_openai_api = provider == "OpenAI API"
-        is_lmstudio = provider == "LM Studio Native API"
-        for w in [self.llm_url_label, self.llm_url_input, self.local_api_token_label, self.local_api_token_input]: w.setVisible(is_local)
-        for w in [self.openai_api_key_label, self.openai_api_key_input]: w.setVisible(is_openai_api)
-        for w in [self.lmstudio_url_label, self.lmstudio_url_input, self.lmstudio_api_key_label, self.lmstudio_api_key_input, self.mcp_plugin_ids_label, self.mcp_plugin_ids_input]: w.setVisible(is_lmstudio)
-        self.adjustSize()
-        
-    def browse_recipes_file(self):
-        options = QFileDialog.Options(); options |= QFileDialog.DontUseNativeDialog
-        fp, _ = QFileDialog.getOpenFileName(self, "Select Recipes File", "", "Markdown Files (*.md);;All Files (*)", options=options)
-        if fp: self.recipes_file_input.setText(fp)
-        
-    def browse_memory_dir(self):
-        options = QFileDialog.Options(); options |= QFileDialog.DontUseNativeDialog
-        d = QFileDialog.getExistingDirectory(self, "Select Memory Directory", options=options)
-        if d: self.memory_dir_input.setText(d)
-        
-    def fetch_available_models(self):
-        """Fetch available models from the selected provider and populate the dropdown."""
-        try:
-            provider = self.llm_provider_combo.currentText()
-            current_model = self.model_name_combo.currentText()
-            
-            models = []
-            headers = {"Content-Type": "application/json"}
-            
-            if provider == "OpenAI API":
-                api_key = self.openai_api_key_input.text().strip()
-                if not api_key:
-                    logging.debug("No OpenAI API key, skipping model fetch")
-                    return
-                headers["Authorization"] = f"Bearer {api_key}"
-                try:
-                    response = requests.get("https://api.openai.com/v1/models", headers=headers, timeout=5)
-                    if response.status_code == 200:
-                        data = response.json()
-                        models = [m['id'] for m in data.get('data', []) if m.get('id')]
-                        # Filter to only show chat completion models
-                        models = [m for m in models if 'gpt' in m.lower() or 'chat' in m.lower()]
-                except Exception as e:
-                    logging.debug(f"Failed to fetch OpenAI models: {e}")
-                    
-            elif provider == "Local OpenAI-Compatible":
-                url = self.llm_url_input.text().strip()
-                if not url:
-                    return
-                # Try to fetch from /v1/models endpoint
-                parsed_url = urlparse(url)
-                base_url = f"{parsed_url.scheme}://{parsed_url.netloc}" if parsed_url.netloc else url.rstrip('/')
-                try:
-                    response = requests.get(f"{base_url}/v1/models", headers=headers, timeout=5)
-                    if response.status_code == 200:
-                        data = response.json()
-                        models = [m['id'] for m in data.get('data', []) if m.get('id')]
-                except Exception as e:
-                    logging.debug(f"Failed to fetch local models: {e}")
-                    
-            elif provider == "LM Studio Native API":
-                url = self.lmstudio_url_input.text().strip()
-                if not url:
-                    return
-                # LM Studio also supports /v1/models
-                parsed_url = urlparse(url)
-                base_url = f"{parsed_url.scheme}://{parsed_url.netloc}" if parsed_url.netloc else url.rstrip('/')
-                api_key = self.lmstudio_api_key_input.text().strip()
-                if api_key:
-                    headers["Authorization"] = f"Bearer {api_key}"
-                try:
-                    response = requests.get(f"{base_url}/v1/models", headers=headers, timeout=5)
-                    if response.status_code == 200:
-                        data = response.json()
-                        models = [m['id'] for m in data.get('data', []) if m.get('id')]
-                except Exception as e:
-                    logging.debug(f"Failed to fetch LM Studio models: {e}")
-            
-            # Update the combo box with fetched models
-            if models:
-                # Preserve current text
-                self.model_name_combo.clear()
-                # Add models, putting currently loaded one first if it exists
-                if current_model and current_model in models:
-                    models.remove(current_model)
-                    self.model_name_combo.addItem(current_model)
-                self.model_name_combo.addItems(sorted(models))
-                # Restore the current text if it wasn't in the list
-                if current_model and self.model_name_combo.findText(current_model) == -1:
-                    self.model_name_combo.setCurrentText(current_model)
-                logging.debug(f"Fetched {len(models)} models from {provider}")
-        except Exception as e:
-            logging.error(f"Error in fetch_available_models: {e}")
-        
-    def load_config_values(self):
-        try:
-            config = {}; 
-            if os.path.exists(CONFIG_FILE):
-                with open(CONFIG_FILE, 'r', encoding='utf-8') as f: config = json.load(f)
-            self.llm_provider_combo.setCurrentText(config.get("llm_provider", "Local OpenAI-Compatible"))
-            self.llm_url_input.setText(config.get("llm_url", "http://127.0.0.1:1234")) # Default Base URL
-            self.local_api_token_input.setText(config.get("local_api_token", ""))
-            self.openai_api_key_input.setText(config.get("openai_api_key", ""))
-            self.lmstudio_url_input.setText(config.get("lmstudio_url", "http://127.0.0.1:1234"))
-            self.lmstudio_api_key_input.setText(config.get("lmstudio_api_key", ""))
-            self.mcp_plugin_ids_input.setText(config.get("mcp_plugin_ids", ""))
-            # Load the require_usetools setting
-            self.require_usetools_checkbox.setChecked(config.get("require_usetools_for_tools", False))
-            # Set the model name in the combo box
-            saved_model = config.get("llm_model_name", "gpt-3.5-turbo")
-            self.model_name_combo.setCurrentText(saved_model)
-            # Fetch available models after a short delay to allow UI to initialize
-            QTimer.singleShot(100, self.fetch_available_models)
-            self.max_recents_input.setText(str(config.get("max_recents", 5))); self.max_favorites_input.setText(str(config.get("max_favorites", 5)))
-            self.recipes_file_input.setText(config.get("recipes_file", os.path.join(BASE_PATH, "recipes.md")))
-            hotkey = config.get("hotkey", {"ctrl": True, "alt": True, "main_key": "c"})
-            self.ctrl_checkbox.setChecked(hotkey.get("ctrl", True)); self.shift_checkbox.setChecked(hotkey.get("shift", False))
-            self.alt_checkbox.setChecked(hotkey.get("alt", True)); self.main_key_input.setText(hotkey.get("main_key", "c"))
-            self.theme_combo.setCurrentText(config.get("theme", "Light"))
-            self.results_display_combo.setCurrentText(config.get("results_display", "Separate Windows"))
-            self.font_size_slider.setValue(config.get("font_size", 10))
-            self.permanent_memory_checkbox.setChecked(config.get("permanent_memory", False))
-            self.memory_dir_input.setText(config.get("memory_dir", os.path.join(BASE_PATH, "memory")))
-            self.timeout_input.setText(str(config.get("llm_timeout", 60)))
-            self.logging_combo.setCurrentText(config.get("logging_level", "Normal"))
-            self.logging_output_combo.setCurrentText(config.get("logging_output", "Both"))
-            self.close_behavior_combo.setCurrentText(config.get("close_behavior", "Exit"))
-            self.update_llm_fields_visibility(); logging.debug("Config loaded successfully in ConfigWindow")
-        except Exception as e: logging.error(f"Error loading config file in ConfigWindow: {e}"); QMessageBox.warning(self, "Config Load Error", f"Could not load configuration: {e}")
-        
-    def save_config_values(self):
-        try:
-            llm_provider_val = self.llm_provider_combo.currentText(); llm_url_val = self.llm_url_input.text().strip()
-            lmstudio_url_val = self.lmstudio_url_input.text().strip()
-            if llm_provider_val == "Local OpenAI-Compatible" and not llm_url_val:
-                reply = QMessageBox.question(self, "LLM URL Not Set", "Use default 'http://127.0.0.1:1234'?", QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
-                if reply == QMessageBox.Yes: llm_url_val = "http://127.0.0.1:1234"
-                elif reply == QMessageBox.Cancel: return
-            if llm_provider_val == "LM Studio Native API" and not lmstudio_url_val:
-                reply = QMessageBox.question(self, "LM Studio URL Not Set", "Use default 'http://127.0.0.1:1234'?", QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
-                if reply == QMessageBox.Yes: lmstudio_url_val = "http://127.0.0.1:1234"
-                elif reply == QMessageBox.Cancel: return
-            permanent_memory_checked = self.permanent_memory_checkbox.isChecked(); memory_dir_val = self.memory_dir_input.text().strip()
-            if permanent_memory_checked and not memory_dir_val:
-                default_mem_dir = os.path.join(BASE_PATH, "memory")
-                reply = QMessageBox.question(self, "Memory Directory", f"Use default '{default_mem_dir}'?", QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
-                if reply == QMessageBox.Yes: memory_dir_val = default_mem_dir; os.makedirs(memory_dir_val, exist_ok=True); self.memory_dir_input.setText(memory_dir_val)
-                elif reply == QMessageBox.Cancel: return
-            mcp_value = self.mcp_plugin_ids_input.text().strip()
-            local_token = self.local_api_token_input.text().strip()
-            logging.debug(f"Saving mcp_plugin_ids from input field: '{mcp_value}'")
-            logging.debug(f"Saving local_api_token: '{local_token}'")
-            config_data = {
-                "llm_provider": llm_provider_val, "llm_url": llm_url_val, "openai_api_key": self.openai_api_key_input.text(),
-                "local_api_token": local_token,
-                "lmstudio_url": lmstudio_url_val, "lmstudio_api_key": self.lmstudio_api_key_input.text(),
-                "mcp_plugin_ids": mcp_value,
-                "require_usetools_for_tools": self.require_usetools_checkbox.isChecked(),
-                "llm_model_name": self.model_name_combo.currentText().strip() or "gpt-3.5-turbo",
-                "max_recents": int(self.max_recents_input.text() or 5), "max_favorites": int(self.max_favorites_input.text() or 5),
-                "recipes_file": self.recipes_file_input.text().strip(),
-                "hotkey": {"ctrl": self.ctrl_checkbox.isChecked(), "shift": self.shift_checkbox.isChecked(), "alt": self.alt_checkbox.isChecked(), "main_key": self.main_key_input.text().strip().lower() or "c"},
-                "logging_level": self.logging_combo.currentText(), "logging_output": self.logging_output_combo.currentText(),
-                "theme": self.theme_combo.currentText(), "results_display": self.results_display_combo.currentText(),
-                "font_size": self.font_size_slider.value(), "permanent_memory": permanent_memory_checked, "memory_dir": memory_dir_val,
-                "llm_timeout": int(self.timeout_input.text() or 60), "close_behavior": self.close_behavior_combo.currentText(),
-                "group_states": getattr(self.main_app_ref, "_group_states", {}), "append_mode": getattr(self.main_app_ref, "append_mode", False), 
-                "textarea_font_sizes": getattr(self.main_app_ref, "textarea_font_sizes", {}), "splitter_sizes": getattr(self.main_app_ref, "splitter_sizes", [250,350,300]),
-                "recently_used_recipes": list(getattr(self.main_app_ref, "recently_used_recipes", deque())), "favorite_recipes": getattr(self.main_app_ref, "favorite_recipes", [])
-            }
-            with open(CONFIG_FILE, 'w', encoding='utf-8') as f: 
-                json.dump(config_data, f, indent=4)
-                f.flush()
-                os.fsync(f.fileno())
-            QMessageBox.information(self, "Config Saved", "Configuration saved successfully."); logging.debug("Config saved successfully"); self.accept()
-        except ValueError as ve: logging.error(f"Invalid input: {ve}"); QMessageBox.critical(self, "Input Error", f"Invalid numeric value: {ve}")
-        except Exception as e: logging.error(f"Could not save config: {e}"); QMessageBox.critical(self, "Save Error", f"Could not save config: {e}")
-
 class CoDudeApp(QMainWindow):
     def __init__(self):
         super().__init__(); self._minimized_by_shortcut = False; logging.info("Starting CoDudeApp initialization")
@@ -477,7 +176,11 @@ class CoDudeApp(QMainWindow):
         cap_font_up = QPushButton("↑",self); cap_font_up.setFixedSize(24,24); cap_font_up.clicked.connect(lambda: self.adjust_textarea_font(self.captured_text_edit,1)); captured_font_layout.addWidget(cap_font_up)
         cap_font_down = QPushButton("↓",self); cap_font_down.setFixedSize(24,24); cap_font_down.clicked.connect(lambda: self.adjust_textarea_font(self.captured_text_edit,-1)); captured_font_layout.addWidget(cap_font_down)
         captured_layout.addLayout(captured_font_layout); right_tabs.addTab(captured_widget, "Captured Text")
-        memory_widget = QWidget(); memory_layout = QVBoxLayout(memory_widget); memory_layout.addWidget(QLabel("CoDude's Memory:", self))
+        memory_widget = QWidget(); memory_layout = QVBoxLayout(memory_widget)
+        memory_header_layout = QHBoxLayout(); memory_header_layout.addWidget(QLabel("CoDude's Memory:", self))
+        memory_header_layout.addStretch(); self.delete_all_memory_button = QPushButton("Delete All", self)
+        self.delete_all_memory_button.setMaximumWidth(100); self.delete_all_memory_button.clicked.connect(self.delete_all_memory_entries)
+        memory_header_layout.addWidget(self.delete_all_memory_button); memory_layout.addLayout(memory_header_layout)
         self.memory_list = QListWidget(self); self.memory_list.itemDoubleClicked.connect(self.show_memory_entry_from_list_item)
         memory_layout.addWidget(self.memory_list, 1); right_tabs.addTab(memory_widget, "Memory")
         tabs_layout.addWidget(right_tabs, 1); self.splitter.addWidget(tabs_widget)
@@ -1075,6 +778,44 @@ class CoDudeApp(QMainWindow):
             logging.debug(f"Memory entry at index {index_to_delete} deleted.")
         except Exception as e: logging.error(f"Error deleting memory entry: {e}", exc_info=True); QMessageBox.critical(self, "Error", f"Failed to delete memory entry: {e}")
         finally: self._deleting_memory = False
+
+    def delete_all_memory_entries(self):
+        """Delete all memory entries after user confirmation."""
+        if not self._memory:
+            QMessageBox.information(self, "No Memory", "There are no memory entries to delete.")
+            return
+        
+        reply = QMessageBox.question(self, "Delete All Memory", 
+                                     f"Are you sure you want to delete all {len(self._memory)} memory entries?\n\nThis action cannot be undone.",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+        
+        try:
+            # Delete all files from disk if permanent memory is enabled
+            if self.permanent_memory and self.memory_dir:
+                for cap_text, prompt, response, filename in self._memory:
+                    if filename:
+                        file_path = os.path.join(self.memory_dir, filename)
+                        if os.path.exists(file_path):
+                            try:
+                                os.remove(file_path)
+                                logging.debug(f"Deleted permanent memory file: {file_path}")
+                            except OSError as e:
+                                logging.error(f"Error deleting file {file_path}: {e}")
+            
+            # Clear the memory lists
+            self._memory.clear()
+            self.memory_list.clear()
+            self.active_memory_index = None
+            if self.results_in_app:
+                self.results_textedit.clear()
+            
+            logging.info(f"All memory entries deleted.")
+            QMessageBox.information(self, "Delete Complete", "All memory entries have been deleted.")
+        except Exception as e:
+            logging.error(f"Error deleting all memory entries: {e}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"Failed to delete all memory entries: {e}")
 
     def on_results_text_changed_by_user(self): pass 
     

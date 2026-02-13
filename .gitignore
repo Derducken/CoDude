@@ -9,4 +9,5 @@ config.json
 problems-and-solutions.md
 project.md
 text-analytics.png
+__pycache__
 .gitignore

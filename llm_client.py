@@ -113,6 +113,7 @@ class LLMRequestThread(QThread):
                 return
 
             logging.debug(f"Sending LLM request to {request_url} for provider {provider} with model {model_name}")
+            logging.debug(f"Payload being sent: {json.dumps(payload, indent=2)}")
             response = requests.post(request_url, json=payload, headers=headers, timeout=self.timeout)
             raw_response = response.text
             
